@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Playground Gallery</title>
+<link rel="stylesheet" href="css/style.css">
+<style>
+  html, body { overflow: auto; }
+  .wrap { max-width: 1280px; margin: 0 auto; padding: 32px 16px 80px; }
+  header { display: flex; justify-content: space-between; align-items: end; gap: 16px; flex-wrap: wrap; margin-bottom: 28px; }
+  h1 { font-size: clamp(32px, 6vw, 56px); margin: 0; letter-spacing: -0.03em; }
+  .sub { color: var(--muted); margin: 6px 0 0; }
+  .live { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; font-size: 14px; color: var(--muted); }
+  .live i { width: 10px; height: 10px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 0 var(--green); animation: pulse 2s infinite; }
+  @keyframes pulse { 70% { box-shadow: 0 0 0 10px transparent; } }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; }
+  .tile { all: unset; cursor: pointer; display: block; background: #15131f; border: 1px solid var(--line); border-radius: 16px; overflow: hidden; transition: transform .2s; }
+  .tile:hover, .tile:focus-visible { transform: translateY(-3px); outline: 2px solid var(--yellow); }
+  .tile img { display: block; width: 100%; aspect-ratio: 4/3; object-fit: contain; background: var(--bg); }
+  .tile .meta { padding: 10px 14px; font-size: 13px; color: var(--muted); display: flex; justify-content: space-between; }
+  .tile.new { animation: pop .8s ease; }
+  @keyframes pop { from { transform: scale(.85); opacity: 0; } }
+  .empty { color: var(--muted); padding: 60px 0; text-align: center; font-size: 18px; }
+  dialog { border: 0; padding: 0; background: transparent; max-width: min(1100px, 94vw); width: 100%; color: var(--text); }
+  dialog::backdrop { background: rgba(5, 4, 10, .85); backdrop-filter: blur(6px); }
+  .viewer { background: #15131f; border: 1px solid var(--line); border-radius: 18px; overflow: hidden; }
+  #replay { display: grid; place-items: center; background: var(--bg); }
+  #replay canvas { max-width: 100%; max-height: 72vh; height: auto !important; width: auto !important; }
+  .bar { display: flex; gap: 10px; padding: 12px; align-items: center; flex-wrap: wrap; }
+  .bar .grow { flex: 1; color: var(--muted); font-size: 14px; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div>
+        <h1>Playground gallery</h1>
+        <p class="sub">Everything drawn on the wall, newest first. Click one to watch it being drawn.</p>
+      </div>
+      <span class="live"><i></i><span id="count">loading…</span></span>
+    </header>
+    <div id="grid" class="grid"></div>
+  </div>
+
+  <dialog id="dlg">
+    <div class="viewer">
+      <div id="replay"></div>
+      <div class="bar">
+        <span class="grow" id="info"></span>
+        <button class="btn" id="again">↻ Replay</button>
+        <a class="btn" id="dl" download>Download PNG</a>
+        <button class="btn" id="close">Close</button>
+      </div>
+    </div>
+  </dialog>
+
+  <script src="vendor/p5.min.js"></script>
+  <script type="module">
+    import { store } from './js/store.js';
+    import { drawSegment } from './js/render.js';
+
+    const grid = document.getElementById('grid');
+    const fmt = t => new Date(t).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    let known = new Set();
+
+    async function load() {
+      const items = await store.list();
+      document.getElementById('count').textContent = `live · ${items.length} drawing${items.length === 1 ? '' : 's'}`;
+      if (!items.length) { grid.innerHTML = '<p class="empty">No drawings yet. Go make the first one on the wall.</p>'; return; }
+      if (grid.querySelector('.empty')) grid.innerHTML = '';
+      const first = known.size === 0;
+      items.slice().reverse().forEach(d => {
+        if (known.has(d.id)) return;
+        known.add(d.id);
+        const b = document.createElement('button');
+        b.className = 'tile' + (first ? '' : ' new');
+        b.innerHTML = `<img alt="Drawing from ${fmt(d.createdAt)}" loading="lazy"><div class="meta"><span>${fmt(d.createdAt)}</span><span>${d.people ? d.people + ' 👤' : ''}</span></div>`;
+        b.querySelector('img').src = d.png;
+        b.onclick = () => open(d.id);
+        grid.prepend(b);
+      });
+    }
+
+    // ---- replay ----
+    let sketch;
+    async function open(id) {
+      const d = await store.get(id);
+      if (!d) return;
+      document.getElementById('info').textContent = `${fmt(d.createdAt)} · ${d.strokes?.length || 0} strokes`;
+      const dl = document.getElementById('dl'); dl.href = d.png; dl.download = `playground-${d.id}.png`;
+      document.getElementById('dlg').showModal();
+      sketch?.remove();
+      sketch = new p5(p => {
+        let events, i, ink, k;
+        const reset = () => {
+          // Flatten strokes into segments ordered by time.
+          events = [];
+          for (const s of d.strokes || []) s.pts.forEach((pt, j) => events.push({ s, j, t: pt[3] }));
+          events.sort((a, b) => a.t - b.t);
+          // Squeeze the timeline: long pauses shrink, whole replay ~8s max.
+          let tt = 0, prev = events[0]?.t ?? 0;
+          for (const e of events) { tt += Math.min(e.t - prev, 250); prev = e.t; e.rt = tt; }
+          k = tt > 8000 ? 8000 / tt : 1;
+          i = 0; p.start = p.millis();
+          ink.clear();
+        };
+        p.setup = () => {
+          const scale = Math.min(1, 1600 / Math.max(d.width, d.height));
+          p.createCanvas(Math.ceil(d.width * scale), Math.ceil(d.height * scale)).parent('replay');
+          p.pixelDensity(1);
+          ink = p.createGraphics(p.width, p.height); ink.pixelDensity(1); ink.scale(scale); ink.strokeCap(p.ROUND);
+          reset();
+          document.getElementById('again').onclick = reset;
+        };
+        p.draw = () => {
+          const t = (p.millis() - p.start) / k;
+          while (i < events.length && events[i].rt <= t) {
+            const { s, j } = events[i];
+            drawSegment(ink, s, s.pts[Math.max(0, j - 1)], s.pts[j], 0, 0, j);
+            i++;
+          }
+          p.background('#0d0c14'); p.image(ink, 0, 0);
+        };
+      });
+    }
+    const dlg = document.getElementById('dlg');
+    document.getElementById('close').onclick = () => dlg.close();
+    dlg.addEventListener('close', () => { sketch?.remove(); sketch = null; });
+
+    load();
+    store.subscribe(() => load());
+  </script>
+</body>
+</html>

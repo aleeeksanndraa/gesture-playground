@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Gesture Playground</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body data-mode="hands">
+  <div id="stage"></div>
+  <video id="cam" playsinline muted></video>
+  <div id="flash"></div>
+
+  <header class="hud top">
+    <div class="brand">gesture playground <span>draw anywhere with your hands</span></div>
+    <div class="right">
+      <div class="seg">
+        <button data-mode-btn="hands">✋ Hands</button>
+        <button data-mode-btn="body">🕺 Body</button>
+      </div>
+      <a class="btn" href="gallery.html" target="_blank">Gallery ↗</a>
+    </div>
+  </header>
+
+  <footer class="hud bottom help">
+    <ul class="legend hands-only">
+      <li><b>🤏</b>pinch to draw</li>
+      <li><b>☝️</b>point to aim</li>
+      <li><b>✋</b>open palm erases</li>
+      <li><b>✊</b>fist moves the canvas</li>
+      <li><b>✌️</b>next colour</li>
+      <li><b>🤘</b>next brush</li>
+      <li><b>👍</b>hold to save</li>
+      <li><b>✋✋</b>hold both to start fresh</li>
+      <li class="z"><b>↕</b>closer to the camera = thicker line</li>
+    </ul>
+    <ul class="legend body-only">
+      <li><b>🙋</b>raise a hand above your hip to paint with it</li>
+      <li><b>🙌</b>both hands over your head for sparkles</li>
+      <li><b>⇆</b>step closer for a thicker brush</li>
+    </ul>
+    <div id="status">starting camera…</div>
+  </footer>
+
+  <div id="toast"></div>
+
+  <div id="intro">
+    <div class="card">
+      <h1>Gesture Playground</h1>
+      <p>A shared canvas you draw on with your hands. Everything people make is saved to the gallery.</p>
+      <button id="start" class="primary">Start camera</button>
+      <p id="err"></p>
+      <p class="keys">Operator keys: <kbd>F</kbd> fullscreen · <kbd>C</kbd> camera preview · <kbd>B</kbd> hand/body mode · <kbd>S</kbd> save · <kbd>N</kbd> save &amp; new · <kbd>X</kbd> clear · <kbd>H</kbd> hide help · <kbd>D</kbd> debug. The mouse also draws, for testing.</p>
+    </div>
+  </div>
+
+  <script src="vendor/p5.min.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
