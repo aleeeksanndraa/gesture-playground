@@ -1,78 +1,76 @@
-# Gesture Playground
+# Doodle Away
 
-A shared canvas that people draw on with their hands. A webcam watches the people in front of a wall
-or a big TV. MediaPipe tracks their hands (or whole bodies), and p5.js turns the movement into ink.
-Every finished drawing goes to an online gallery, where you can watch it being drawn again.
+*a free playground to draw!*
+
+A shared paper page, projected on a wall or a big TV, that people doodle on with their hands in
+the air. A webcam watches the people in front of it, MediaPipe tracks their hands, and p5.js turns
+the movement into felt-tip marker lines. Every finished page goes to the gallery, where you can
+watch it being drawn again.
 
 HvA playground project.
 
 ## Run it
 
-No build step. Everything is in the repo, including the MediaPipe models, so it also works
+No build step, and everything is in the repo (MediaPipe model, fonts, libraries), so it also works
 offline at an exhibition.
 
-```bash
-cd gesture-playground
-python3 -m http.server 8000
-# open http://localhost:8000 in Chrome, click "Start camera", then press F for fullscreen
-```
+- **Mac:** double-click `Start Playground.command`. It starts a small local server and opens Chrome.
+  The first time, right-click it and choose Open, because macOS asks about files from the internet.
+- **Anywhere:** `python3 -m http.server 8000` in this folder, then open http://localhost:8000 in Chrome.
 
-The camera only works on `localhost` or over `https`, so open the page through a local server,
+The camera only works on `localhost` or over `https`, so always open it through the local server,
 not as a file.
 
-- `index.html`: the wall. Put it on the projector or TV, fullscreen.
-- `gallery.html`: the gallery. Saved drawings show up here, and new ones appear live.
+- `index.html`: the wall. Put it on the projector or TV, fullscreen (press F).
+- `gallery.html`: the scrapbook gallery. New pages appear live.
 
-## Gestures
+## How to play
 
-Hand mode (default), for one or more people standing about 1–3 m from the camera:
+Drawing needs **exactly two hands** in view: one person's two hands, or two people with one hand
+each. The tracker never follows more than two hands. With only one hand in view, the page asks for
+the other one.
 
 | Gesture | What it does |
 | --- | --- |
-| 🤏 pinch thumb + index | draw |
-| ☝️ point | aim (cursor only, no ink) |
-| ✋ open palm | eraser |
-| ✊ fist | grab the canvas and move it (infinite canvas, FigJam style) |
-| ✌️ peace sign | next colour |
-| 🤘 index + pinky | next brush (ink, neon, spray) |
-| 👍 thumbs up, held 1.2 s | save to the gallery |
-| ✋✋ two open palms, held 2.5 s | save, then start a fresh canvas |
-| ↕ hand closer to the camera | thicker line (depth sets brush size) |
+| 🤏 pinch thumb + index | draw (each hand has its own marker colour) |
+| 🖐 open hand | erase |
+| 👍👍 both thumbs up, held 1.5 s | save the page to the gallery and start a fresh page |
 
-Body mode (press **B**, or the toggle at the top) works for people further away. Each raised wrist
-paints a neon trail, and both hands over your head make sparkles. Stepping closer gives a thicker brush.
+To change colour, rest a hand on one of the markers in the tray at the bottom of the page.
+How close your hand is to the camera sets the line width a little.
 
-Several people can draw at once. Every hand gets its own colour and cursor.
+After 90 seconds with nobody in view, the page is saved and a fresh one starts, so the wall can run
+unattended. Change this in `js/config.js`.
 
-When nobody has been in view for 90 seconds, the drawing is saved and the canvas starts fresh, so
-the installation can run unattended. Change this in `js/config.js`.
+### Keys
 
-### Operator keys
-
-`F` fullscreen · `C` camera preview · `B` hand/body mode · `S` save · `N` save & new · `X` clear
-without saving · `H` hide the gesture legend · `D` debug. The mouse also draws, for testing.
+`F` fullscreen · `C` camera preview · `S` save · `N` save & new page · `X` clear without saving ·
+`H` hide the how-to note. The mouse also draws, for testing.
 
 ## How it fits together
 
 ```
-webcam ─► MediaPipe HandLandmarker / PoseLandmarker (WASM + GPU, in the browser)
-        ─► js/gestures.js   classify each hand, track identities, smooth the cursor
-        ─► js/app.js        p5.js wall: strokes, eraser, panning, particles, HUD
-        ─► js/store.js      save {PNG, stroke data} ─► gallery.html (thumbnails + replay)
+webcam ─► MediaPipe HandLandmarker (max 2 hands, WASM + GPU, in the browser)
+        ─► js/gestures.js   classify each hand, keep its identity, smooth the cursor
+        ─► js/app.js        p5.js wall: two-hand rule, markers, eraser, save
+        ─► js/store.js      save {PNG, stroke data} ─► gallery.html (scrapbook + replay)
 ```
 
+The look (paper, pencil frame, marker title, margin doodles) is plain HTML/SVG/CSS in `index.html`,
+`css/style.css` and `js/doodles.js`, so it is easy to restyle. Fonts are Patrick Hand and Gaegu
+(SIL Open Font License), in `fonts/`.
+
 Drawings are saved as a PNG plus the raw stroke data (points, width, time). The gallery uses the
-stroke data to replay the drawing as a short timelapse. `js/render.js` draws strokes the same way
-on the wall and in the gallery.
+stroke data to replay the drawing. `js/render.js` draws strokes the same way on the wall and in
+the gallery.
 
 ## Online gallery
 
 Out of the box, drawings are stored in the browser on the wall computer (IndexedDB), and
-`gallery.html` on the same computer updates live. That is enough for a demo.
+`gallery.html` on the same computer updates live.
 
-To put the gallery online, so people can see drawings on their phones, use a free
-[Supabase](https://supabase.com) project and host the folder on any static host
-(GitHub Pages, Netlify, Vercel):
+To put the gallery online, use a free [Supabase](https://supabase.com) project and host the folder
+on any static host (GitHub Pages, Netlify, Vercel):
 
 1. Create a Supabase project. In the SQL editor, run:
 
@@ -89,26 +87,21 @@ To put the gallery online, so people can see drawings on their phones, use a fre
    create policy "wall can insert"   on drawings for insert with check (true);
    ```
 
-2. Under Storage, create a **public** bucket called `drawings`, and add a policy that allows `insert`
-   for the `anon` role.
+2. Under Storage, create a **public** bucket called `drawings`, and allow `insert` for the `anon` role.
 3. Put the project URL and anon key in `js/config.js`.
 
-The Supabase adapter in `js/store.js` has not been tested against a live project yet. Expect to
-adjust it the first time you connect it. Before a public exhibition, add moderation, for example
-a `hidden` column that the gallery filters on.
+The Supabase adapter in `js/store.js` has not been tested against a live project yet.
 
 ## Tuning for the space
 
-- `reachMargin` in `js/config.js`: how much of the camera frame covers the whole wall. Raise it
-  if people can't reach the edges.
-- `minBrush` / `maxBrush`: line width range.
-- Pinch sensitivity lives in `classify()` in `js/gestures.js`. Thresholds were checked on
-  MediaPipe's sample hand photos and should be tuned with the real camera and lighting.
+- `reachMargin` in `js/config.js`: how much of the camera frame covers the page.
+- `minBrush` / `maxBrush`: marker width range.
+- Pinch sensitivity lives in `classify()` in `js/gestures.js`. Tune it with the real camera and light.
 - Put the camera just above or below the projection, at chest height, facing the people.
-  Good front light helps tracking much more than a better camera.
+  Even front light helps tracking more than a better camera.
 
 ## Libraries
 
 - [MediaPipe Tasks Vision](https://ai.google.dev/edge/mediapipe/solutions/vision/hand_landmarker) 0.10.14
-  (`vendor/tasks-vision`, models in `models/`)
-- [p5.js](https://p5js.org) 1.9.4 (`vendor/p5.min.js`)
+- [p5.js](https://p5js.org) 1.9.4
+- Fonts: Patrick Hand, Gaegu (via Fontsource)

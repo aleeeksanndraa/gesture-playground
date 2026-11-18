@@ -8,7 +8,12 @@ export function drawSegment(g, s, a, b, ox, oy, i) {
     g.stroke(255); g.erase(); g.strokeWeight(w * 2.2); g.line(ax, ay, bx, by); g.noErase(); return;
   }
   const c = g.color(s.color);
-  if (s.brush === 'ink') {
+  if (s.brush === 'marker') {
+    // Felt-tip marker: width breathes a little like a real pen.
+    g.stroke(c);
+    g.strokeWeight(w * (0.85 + 0.3 * hash(i * 0.37 + s.seed)));
+    g.line(ax, ay, bx, by);
+  } else if (s.brush === 'ink') {
     g.stroke(c); g.strokeWeight(w); g.line(ax, ay, bx, by);
   } else if (s.brush === 'neon') {
     c.setAlpha(45); g.stroke(c); g.strokeWeight(w * 2.4); g.line(ax, ay, bx, by);
