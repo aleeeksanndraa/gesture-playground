@@ -36,6 +36,16 @@ each. The tracker never follows more than two hands.
 | 🖐 open hand | erase |
 | 👍 thumbs up on every hand in view, held 1.5 s | save the page to the gallery and start a fresh page |
 
+### The window
+
+Pinch with both hands (thumb on index finger), hands close together, then pull them apart, like
+stretching something open. A window tears open in the paper between your hands. Let go and it stays
+open. To close it, pinch both hands at the window again and push them together.
+
+Inside the window everything is real: the live camera in full colour, lined up like a mirror, and
+every doodle on the page turns into a glossy 3D tube with its own shadow, as if the drawings were
+physical objects in the room. Lines you draw while the window is open appear inside it too.
+
 To change colour, rest your fingertip on one of the markers in the tray at the bottom of the page.
 How close your hand is to the camera sets the line width a little.
 
@@ -52,7 +62,7 @@ breaking. Press `D` to see the tracking speed; on a recent laptop it should say 
 ### Keys
 
 `F` fullscreen · `C` camera preview · `S` save · `N` save & new page · `X` clear without saving ·
-`H` hide the how-to note · `D` speed info. The mouse also draws, for testing.
+`H` hide the how-to note · `D` speed info · `W` open/close the window. The mouse also draws, for testing.
 
 ## How it fits together
 

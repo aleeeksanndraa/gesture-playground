@@ -5,6 +5,7 @@
 export const G = {
   NONE: 'none',       // relaxed hand: pen up
   POINT: 'point',     // index finger out: draw (the fingertip is the pen)
+  PINCH: 'pinch',     // thumb + index together: grab (both hands pinching = stretch a window open)
   OPEN: 'open',       // open hand: eraser
   FIST: 'fist',       // fist: pen up
   THUMBS: 'thumbs',   // thumbs up held: save
@@ -15,8 +16,11 @@ const d = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 // A finger is extended when its tip is clearly farther from the wrist than its middle joint.
 const fingerUp = (lm, tip, pip, k = 1.12) => d(lm[tip], lm[0]) > d(lm[pip], lm[0]) * k;
 
-export function classify(lm) {
+export function classify(lm, wasPinching = false) {
   const scale = d(lm[0], lm[9]) || 1e-6;
+  // Pinch: thumb tip on the index tip, index at least half out (a fist also brings them close).
+  const pinchRatio = d(lm[4], lm[8]) / scale;
+  if (d(lm[8], lm[5]) / scale > 0.36 && pinchRatio < (wasPinching ? 0.45 : 0.28)) return { g: G.PINCH, scale };
   const index = fingerUp(lm, 8, 6);
   const middle = fingerUp(lm, 12, 10);
   const ring = fingerUp(lm, 16, 14);
@@ -81,20 +85,21 @@ export class HandTracker {
       } else { t = this.tracks.get(best); unmatched.delete(best); }
       t.wrist = wrist; t.seen = now; t.lost = false; t.landmarks = h.landmarks;
 
-      const { g, scale } = classify(h.landmarks);
+      const { g, scale } = classify(h.landmarks, t.gesture === G.PINCH);
       if (g === t.raw) t.rawCount++; else { t.raw = g; t.rawCount = 1; }
       const prev = t.gesture;
       // Pen down/up is fast (2 frames); save and erase need a little more certainty.
-      const need = g === G.POINT || prev === G.POINT || g === G.NONE || g === G.FIST ? 2 : 3;
+      const need = g === G.POINT || prev === G.POINT || g === G.PINCH || prev === G.PINCH || g === G.NONE || g === G.FIST ? 2 : 3;
       if (t.rawCount >= need && g !== t.gesture) { t.gesture = g; t.since = now; }
       t.changed = t.gesture !== prev;
       t.scale = t.scale == null ? scale : t.scale * 0.8 + scale * 0.2;
 
       // Cursor: the index fingertip; palm centre for open hand / fist / thumbs.
       const lm = h.landmarks;
-      const p = t.gesture === G.OPEN || t.gesture === G.FIST || t.gesture === G.THUMBS
-        ? { x: (lm[0].x + lm[9].x) / 2, y: (lm[0].y + lm[9].y) / 2 } : lm[8];
-      const src = p === lm[8] ? 'tip' : 'palm';
+      let p, src;
+      if (t.gesture === G.OPEN || t.gesture === G.FIST || t.gesture === G.THUMBS) { p = { x: (lm[0].x + lm[9].x) / 2, y: (lm[0].y + lm[9].y) / 2 }; src = 'palm'; }
+      else if (t.gesture === G.PINCH) { p = { x: (lm[4].x + lm[8].x) / 2, y: (lm[4].y + lm[8].y) / 2 }; src = 'pinch'; }
+      else { p = lm[8]; src = 'tip'; }
       if (src !== t.src) { t.fx.reset(); t.fy.reset(); t.src = src; }   // no streak when the cursor source jumps
       t.x = t.fx.filter(p.x, now); t.y = t.fy.filter(p.y, now);
     }

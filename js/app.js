@@ -7,7 +7,7 @@ import { FilesetResolver, HandLandmarker } from '../vendor/tasks-vision/vision_b
 import { G, HandTracker } from './gestures.js';
 import { store, newId } from './store.js';
 import { CONFIG } from './config.js';
-import { drawSegment, drawStroke } from './render.js';
+import { drawSegment, drawStroke, drawRealSegment } from './render.js';
 import { DOODLES, wobblyRect } from './doodles.js';
 
 // Felt-tip colours taken from the paper sheet.
@@ -123,10 +123,20 @@ const inTray = (x, y) => state.tray.find(b => x > b.x - 6 && x < b.x + b.w + 6 &
 // ---------- p5 sketch ----------
 new p5(p => {
   let ink;
+  // Layers for the "real world" window (glossy 3D tubes), kept in step with the ink layer.
+  let real = null;
+  const makeLayers = () => {
+    ink = p.createGraphics(p.width, p.height); ink.pixelDensity(1);
+    real?.shadow && Object.values(real).forEach(g => g.remove());
+    real = {};
+    for (const k of ['shadow', 'rim', 'body', 'gloss', 'shine']) { real[k] = p.createGraphics(p.width, p.height); real[k].pixelDensity(1); real[k].strokeCap(p.ROUND); }
+  };
+  const drawRealStroke = s => { for (let i = 0; i < s.pts.length; i++) drawRealSegment(real, s, s.pts[Math.max(0, i - 1)], s.pts[i], i); };
 
   const rebake = () => {
     ink.clear(); ink.strokeCap(p.ROUND);
-    for (const s of state.strokes) drawStroke(ink, s, 0, 0);
+    for (const g of Object.values(real)) g.clear();
+    for (const s of state.strokes) { drawStroke(ink, s, 0, 0); drawRealStroke(s); }
   };
   const startStroke = (key, color, brush) => {
     const s = { id: newId(), color, brush, seed: Math.floor(Math.random() * 1e4), pts: [] };
@@ -141,6 +151,7 @@ new p5(p => {
     pts.push(pt);
     ink.strokeCap(p.ROUND);
     drawSegment(ink, s, last || pt, pt, 0, 0, pts.length - 1);
+    drawRealSegment(real, s, last || pt, pt, pts.length - 1);
   };
   const endStroke = key => active.delete(key);
 
@@ -154,20 +165,22 @@ new p5(p => {
   p.setup = () => {
     p.createCanvas(window.innerWidth, window.innerHeight).parent('stage');
     p.pixelDensity(1);
-    ink = p.createGraphics(p.width, p.height); ink.pixelDensity(1);
+    makeLayers();
     p.frameRate(60);
     p.textFont('Patrick Hand');
-    window.__playground = { state, rebake, save: () => saveDrawing(), clear: () => clearPage() };
+    window.__playground = { state, rebake, save: () => saveDrawing(), clear: () => clearPage(), toggleWindow };
   };
   p.windowResized = () => {
     p.resizeCanvas(window.innerWidth, window.innerHeight);
-    ink = p.createGraphics(p.width, p.height); ink.pixelDensity(1);
+    makeLayers();
     rebake();
   };
 
   function clearPage() {
     state.strokes = []; active.clear(); state.started = performance.now();
     ink.clear();
+    for (const g of Object.values(real)) g.clear();
+    state.win = null;
   }
 
   async function saveDrawing({ auto = false } = {}) {
@@ -200,8 +213,82 @@ new p5(p => {
 
   let hands = [];
 
+  // ---------- window into the real world ----------
+  // Pinch with both hands close together, then pull them apart: a window stretches open between
+  // them. Let go and it stays. Pinch both hands again and bring them together to close it.
+  function updateWindow(visible, now) {
+    const pinch = visible.filter(t => t.gesture === G.PINCH);
+    if (pinch.length === 2) {
+      const [a, b] = pinch.map(t => toScreen(t.x, t.y));
+      const rect = { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w: Math.abs(a.x - b.x), h: Math.abs(a.y - b.y) };
+      const w = state.win;
+      if (!w || w.phase !== 'stretch') {
+        // Start only when the two pinches begin close together (like grabbing one point),
+        // or grab an open window by its corners.
+        const close = Math.hypot(a.x - b.x, a.y - b.y) < 160;
+        const onCorners = w && w.phase === 'open' && [a, b].every(q => q.x > w.x - 80 && q.x < w.x + w.w + 80 && q.y > w.y - 80 && q.y < w.y + w.h + 80);
+        if (!close && !onCorners) return false;
+        state.win = { ...(w || {}), ...rect, phase: 'stretch', since: now, seed: w?.seed ?? Math.floor(Math.random() * 1000), opened: w?.opened ?? now };
+        return true;
+      }
+      Object.assign(w, rect);
+      return true;
+    }
+    if (state.win?.phase === 'stretch') {
+      const w = state.win;
+      if (w.w > 90 && w.h > 60) { w.phase = 'open'; sparkle(w.x + w.w / 2, w.y, '#f2b630', 24); }
+      else state.win = null;   // pushed back together: closed
+    }
+    return false;
+  }
+  function toggleWindow() {
+    const f = state.frame;
+    state.win = state.win ? null : { x: f.x + f.w * 0.3, y: f.y + f.h * 0.2, w: f.w * 0.4, h: f.h * 0.55, phase: 'open', seed: 5, opened: performance.now() };
+  }
+
+  function drawWindow(now) {
+    const w = state.win; if (!w) return;
+    const ctx = p.drawingContext;
+    const grow = Math.min(1, (now - (w.opened || 0)) / 250);   // little pop when it first opens
+    const pad = (1 - grow) * Math.min(w.w, w.h) * 0.3;
+    const x = w.x + pad, y = w.y + pad, ww = Math.max(4, w.w - pad * 2), hh = Math.max(4, w.h - pad * 2);
+    const path = new Path2D(wobblyRect(x, y, ww, hh, w.seed, 5));
+    // shadow under the "torn" opening
+    ctx.save(); ctx.shadowColor = 'rgba(40,30,20,.35)'; ctx.shadowBlur = 24; ctx.shadowOffsetY = 8;
+    ctx.fillStyle = '#000'; ctx.fill(path); ctx.restore();
+    ctx.save(); ctx.clip(path);
+    // the real world: live camera, mirrored, in full colour, covering the whole page so the
+    // window lines up with where you stand
+    if (video && video.readyState >= 2) {
+      const vw = video.videoWidth, vh = video.videoHeight, k = Math.max(p.width / vw, p.height / vh);
+      ctx.filter = 'contrast(1.12) saturate(1.25)';
+      ctx.translate(p.width / 2, p.height / 2); ctx.scale(-1, 1);
+      ctx.drawImage(video, -vw * k / 2, -vh * k / 2, vw * k, vh * k);
+      ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.filter = 'none';
+    } else { ctx.fillStyle = '#556'; ctx.fillRect(x, y, ww, hh); }
+    // doodles become real objects: soft shadow, then rim, body and shine
+    ctx.filter = 'blur(6px)'; ctx.globalAlpha = 0.45; ctx.drawImage(real.shadow.elt, 0, 0); ctx.filter = 'none'; ctx.globalAlpha = 1;
+    ctx.drawImage(real.rim.elt, 0, 0); ctx.drawImage(real.body.elt, 0, 0);
+    ctx.globalAlpha = 0.28; ctx.drawImage(real.gloss.elt, 0, 0); ctx.globalAlpha = 0.85; ctx.drawImage(real.shine.elt, 0, 0); ctx.globalAlpha = 1;
+    // lens vignette
+    const g = ctx.createRadialGradient(x + ww / 2, y + hh / 2, Math.min(ww, hh) * 0.35, x + ww / 2, y + hh / 2, Math.max(ww, hh) * 0.75);
+    g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,.35)');
+    ctx.fillStyle = g; ctx.fillRect(x, y, ww, hh);
+    ctx.restore();
+    // paper edge around the opening
+    ctx.save(); ctx.lineJoin = 'round';
+    ctx.strokeStyle = '#fffdf8'; ctx.lineWidth = 9; ctx.stroke(path);
+    ctx.strokeStyle = 'rgba(139,135,128,.9)'; ctx.lineWidth = 1.6; ctx.stroke(new Path2D(wobblyRect(x - 4, y - 4, ww + 8, hh + 8, w.seed + 1, 4)));
+    ctx.restore();
+    if (w.phase === 'stretch') {
+      p.noStroke(); p.fill('#2d2a32'); p.textSize(24); p.textAlign(p.CENTER, p.BOTTOM);
+      p.text(ww > 90 && hh > 60 ? 'let go to keep it open' : 'pull apart to open', x + ww / 2, y - 12);
+    }
+  }
+
   function handleHands(tracks, now) {
     const visible = tracks.filter(t => !t.lost);
+    const stretching = updateWindow(visible, now);
 
     let thumbs = 0;
     for (const t of tracks) {
@@ -229,6 +316,7 @@ new p5(p => {
         continue;
       }
       t.pick = null;
+      if (stretching) { endStroke(key); continue; }   // hands busy holding the window open
 
       if (t.gesture === G.POINT) {
         const st = active.get(key);
@@ -286,6 +374,7 @@ new p5(p => {
 
     p.clear();
     p.image(ink, 0, 0);
+    drawWindow(now);
     drawParticles();
     for (const t of hands) if (!t.lost && t.sx != null) drawCursor(t, now);
     if (state.saveHold) drawSaveHold(now);
@@ -320,7 +409,7 @@ new p5(p => {
     p.endShape();
   }
 
-  const LABEL = { [G.POINT]: 'drawing', [G.OPEN]: 'erasing', [G.THUMBS]: 'thumbs up!' };
+  const LABEL = { [G.POINT]: 'drawing', [G.OPEN]: 'erasing', [G.THUMBS]: 'thumbs up!', [G.PINCH]: 'grab' };
 
   function drawCursor(t, now) {
     const col = MARKERS[t.marker].color;
@@ -369,6 +458,7 @@ new p5(p => {
     if (k === 'x') clearPage();
     if (k === 'h') document.body.classList.toggle('hide-help');
     if (k === 'd') state.debug = !state.debug;
+    if (k === 'w') toggleWindow();
     if (k === 'f') document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
   };
 });
