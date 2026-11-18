@@ -26,33 +26,40 @@ not as a file.
 
 ## How to play
 
-Drawing needs **exactly two hands** in view: one person's two hands, or two people with one hand
-each. The tracker never follows more than two hands. With only one hand in view, the page asks for
-the other one.
+One or two hands can draw at the same time: one person's two hands, or two people with one hand
+each. The tracker never follows more than two hands.
 
 | Gesture | What it does |
 | --- | --- |
-| 🤏 pinch thumb + index | draw (each hand has its own marker colour) |
+| ☝️ point with your index finger | draw: the fingertip is the pen (each hand has its own marker colour) |
+| ✊ fist, or a relaxed hand | lift the pen to move somewhere else |
 | 🖐 open hand | erase |
-| 👍👍 both thumbs up, held 1.5 s | save the page to the gallery and start a fresh page |
+| 👍 thumbs up on every hand in view, held 1.5 s | save the page to the gallery and start a fresh page |
 
-To change colour, rest a hand on one of the markers in the tray at the bottom of the page.
+To change colour, rest your fingertip on one of the markers in the tray at the bottom of the page.
 How close your hand is to the camera sets the line width a little.
 
 After 90 seconds with nobody in view, the page is saved and a fresh one starts, so the wall can run
 unattended. Change this in `js/config.js`.
 
+### Speed
+
+Hand tracking runs on every new camera frame, separately from drawing, on small 640×480 frames
+with the GPU. The fingertip goes through a One Euro filter: steady when your hand is slow, close
+behind it when you move fast. If tracking misses a frame or two, the line carries on instead of
+breaking. Press `D` to see the tracking speed; on a recent laptop it should say GPU and 30+ fps.
+
 ### Keys
 
 `F` fullscreen · `C` camera preview · `S` save · `N` save & new page · `X` clear without saving ·
-`H` hide the how-to note. The mouse also draws, for testing.
+`H` hide the how-to note · `D` speed info. The mouse also draws, for testing.
 
 ## How it fits together
 
 ```
-webcam ─► MediaPipe HandLandmarker (max 2 hands, WASM + GPU, in the browser)
-        ─► js/gestures.js   classify each hand, keep its identity, smooth the cursor
-        ─► js/app.js        p5.js wall: two-hand rule, markers, eraser, save
+webcam (640×480) ─► MediaPipe HandLandmarker (max 2 hands, GPU, every camera frame)
+        ─► js/gestures.js   classify each hand, keep its identity, One Euro filter on the fingertip
+        ─► js/app.js        p5.js wall: markers, eraser, save
         ─► js/store.js      save {PNG, stroke data} ─► gallery.html (scrapbook + replay)
 ```
 
@@ -96,7 +103,8 @@ The Supabase adapter in `js/store.js` has not been tested against a live project
 
 - `reachMargin` in `js/config.js`: how much of the camera frame covers the page.
 - `minBrush` / `maxBrush`: marker width range.
-- Pinch sensitivity lives in `classify()` in `js/gestures.js`. Tune it with the real camera and light.
+- Gesture thresholds live in `classify()` in `js/gestures.js`, and the smoothing in `OneEuro`
+  (`minCutoff` lower = steadier, `beta` higher = less lag). Tune with the real camera and light.
 - Put the camera just above or below the projection, at chest height, facing the people.
   Even front light helps tracking more than a better camera.
 

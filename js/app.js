@@ -1,5 +1,8 @@
 // Doodle Away wall: webcam → MediaPipe hands → p5.js marker drawing on a paper page.
-// Drawing needs exactly two hands in view (one person's two hands, or two people with one each).
+// One or two hands draw at once (never more than two). The index fingertip is the pen.
+//
+// Speed notes: hand detection runs on every new camera frame (requestVideoFrameCallback),
+// separate from the 60 fps render loop, on small 640×480 frames with the GPU delegate.
 import { FilesetResolver, HandLandmarker } from '../vendor/tasks-vision/vision_bundle.mjs';
 import { G, HandTracker } from './gestures.js';
 import { store, newId } from './store.js';
@@ -39,7 +42,8 @@ const state = {
 };
 const active = new Map();
 const particles = [];
-let video, handLm, lastVideoTime = -1, ready = false;
+let video, handLm, ready = false, delegate = '';
+const perf = { infer: 0, detFps: 0, lastDet: 0 };
 const tracker = new HandTracker();
 let nextMarker = 0;
 
@@ -88,14 +92,17 @@ async function initVision() {
     baseOptions: { modelAssetPath: './models/hand_landmarker.task', delegate },
     runningMode: 'VIDEO',
     numHands: 2,                       // never more than two hands
-    minHandDetectionConfidence: 0.6, minHandPresenceConfidence: 0.5, minTrackingConfidence: 0.5,
+    minHandDetectionConfidence: 0.5, minHandPresenceConfidence: 0.4, minTrackingConfidence: 0.4,
   });
-  try { handLm = await HandLandmarker.createFromOptions(fileset, opts('GPU')); }
-  catch { handLm = await HandLandmarker.createFromOptions(fileset, opts('CPU')); }
+  try { handLm = await HandLandmarker.createFromOptions(fileset, opts('GPU')); delegate = 'GPU'; }
+  catch { handLm = await HandLandmarker.createFromOptions(fileset, opts('CPU')); delegate = 'CPU'; }
 }
 async function initCamera() {
   video = $('#cam');
-  const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720, facingMode: 'user' }, audio: false });
+  // Small frames are plenty for hand tracking and much faster to hand to the GPU.
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 60 }, facingMode: 'user' }, audio: false,
+  });
   video.srcObject = stream;
   await video.play();
 }
@@ -165,7 +172,7 @@ new p5(p => {
 
   async function saveDrawing({ auto = false } = {}) {
     const drawn = state.strokes.filter(s => s.brush !== 'erase' && s.pts.length > 1);
-    if (!drawn.length) { if (!auto) toast('Nothing to save yet. Pinch with both hands to draw!'); return null; }
+    if (!drawn.length) { if (!auto) toast('Nothing to save yet. Point a finger to draw!'); return null; }
     // The saved picture is the drawing page itself, on paper.
     const f = state.frame;
     const k = Math.min(1, 1800 / Math.max(f.w, f.h));
@@ -195,25 +202,25 @@ new p5(p => {
 
   function handleHands(tracks, now) {
     const visible = tracks.filter(t => !t.lost);
-    const together = visible.length === 2;
-    document.body.classList.toggle('one-hand', visible.length === 1);
-    document.body.classList.toggle('two-hands', together);
 
     let thumbs = 0;
-    for (const t of visible) {
+    for (const t of tracks) {
       if (t.marker == null) {
-        const used = new Set(visible.filter(o => o.marker != null).map(o => o.marker));
+        const used = new Set(tracks.filter(o => o.marker != null).map(o => o.marker));
         let m = nextMarker++ % MARKERS.length;
         while (used.has(m)) m = (m + 1) % MARKERS.length;
         t.marker = m;
       }
       const s = toScreen(t.x, t.y);
       t.sx = s.x; t.sy = s.y; t.w = brushWidth(t.scale);
+      // A hand the tracker missed for a frame or two keeps its stroke open but adds nothing,
+      // so the line continues when it comes back instead of breaking.
+      if (t.lost) continue;
       const key = 'h' + t.id;
 
-      // Pick a colour by resting a hand on a marker in the tray.
+      // Pick a colour by resting a fingertip on a marker in the tray.
       const hit = inTray(s.x, s.y);
-      if (hit && (t.gesture === G.POINT || t.gesture === G.PINCH)) {
+      if (hit && t.gesture === G.POINT) {
         if (t.pick?.i !== hit.i) t.pick = { i: hit.i, since: now };
         else if (now - t.pick.since > CONFIG.pickSeconds * 1000 && t.marker !== hit.i) {
           t.marker = hit.i; sparkle(s.x, s.y, MARKERS[hit.i].color, 14);
@@ -223,25 +230,22 @@ new p5(p => {
       }
       t.pick = null;
 
-      const drawing = together && t.gesture === G.PINCH;
-      const erasing = together && t.gesture === G.OPEN;
-      if (!drawing && !erasing) endStroke(key);
-      if (drawing) {
+      if (t.gesture === G.POINT) {
         const st = active.get(key);
         const cur = st && st.brush === 'marker' ? st : (endStroke(key), startStroke(key, MARKERS[t.marker].color, 'marker'));
         addPoint(cur, s.x, s.y, t.w);
-      } else if (erasing) {
+      } else if (t.gesture === G.OPEN) {
         const st = active.get(key);
         const cur = st && st.brush === 'erase' ? st : (endStroke(key), startStroke(key, null, 'erase'));
         addPoint(cur, s.x, s.y, 26);
-      }
+      } else endStroke(key);
       if (t.gesture === G.THUMBS) thumbs++;
     }
-    const live = new Set(visible.map(t => 'h' + t.id));
+    const live = new Set(tracks.map(t => 'h' + t.id));
     for (const k of [...active.keys()]) if (k.startsWith('h') && !live.has(k)) endStroke(k);
 
-    // Both thumbs up, held: save the page and start a fresh one.
-    if (thumbs === 2 && now - state.lastSave > 4000) {
+    // Thumbs up on every hand in view (one or both), held: save the page and start a fresh one.
+    if (thumbs && thumbs === visible.length && now - state.lastSave > 4000) {
       state.saveHold ??= { since: now };
       if (now - state.saveHold.since > CONFIG.saveHoldSeconds * 1000) {
         state.saveHold = null;
@@ -251,15 +255,30 @@ new p5(p => {
     } else state.saveHold = null;
   }
 
+  // Detection runs on each new camera frame, independent of drawing frames.
+  function detectLoop() {
+    const step = (nowArg, meta) => {
+      if (ready && video.readyState >= 2) {
+        const now = performance.now();
+        const r = handLm.detectForVideo(video, now);
+        const t1 = performance.now();
+        perf.infer = perf.infer * 0.9 + (t1 - now) * 0.1;
+        if (perf.lastDet) perf.detFps = perf.detFps * 0.9 + (1000 / (t1 - perf.lastDet)) * 0.1;
+        perf.lastDet = t1;
+        hands = tracker.update(r.landmarks.slice(0, 2).map(landmarks => ({ landmarks })), now);
+        handleHands(hands, now);
+        if (hands.length) state.lastSeen = now;
+      }
+      schedule();
+    };
+    const schedule = () => 'requestVideoFrameCallback' in HTMLVideoElement.prototype
+      ? video.requestVideoFrameCallback(step) : requestAnimationFrame(() => step());
+    schedule();
+  }
+  state.startDetection = detectLoop;
+
   p.draw = () => {
     const now = performance.now();
-    if (ready && video.readyState >= 2 && video.currentTime !== lastVideoTime) {
-      lastVideoTime = video.currentTime;
-      const r = handLm.detectForVideo(video, now);
-      hands = tracker.update(r.landmarks.slice(0, 2).map(landmarks => ({ landmarks })), now);
-      handleHands(hands, now);
-      if (hands.length) state.lastSeen = now;
-    }
     if (CONFIG.idleResetSeconds && ready && state.strokes.length && now - state.lastSeen > CONFIG.idleResetSeconds * 1000) {
       state.lastSeen = now;
       saveDrawing({ auto: true }).then(id => id && clearPage());
@@ -270,6 +289,10 @@ new p5(p => {
     drawParticles();
     for (const t of hands) if (!t.lost && t.sx != null) drawCursor(t, now);
     if (state.saveHold) drawSaveHold(now);
+    if (state.debug) {
+      p.noStroke(); p.fill('#2d2a32'); p.textSize(18); p.textAlign(p.LEFT, p.TOP);
+      p.text(`${delegate} · tracking ${perf.detFps.toFixed(0)} fps · ${perf.infer.toFixed(1)} ms · drawing ${p.frameRate().toFixed(0)} fps · camera ${video?.videoWidth}×${video?.videoHeight}`, state.frame.x + 10, state.frame.y + 8);
+    }
   };
 
   function drawParticles() {
@@ -297,14 +320,13 @@ new p5(p => {
     p.endShape();
   }
 
-  const LABEL = { [G.PINCH]: 'drawing', [G.OPEN]: 'erasing', [G.THUMBS]: 'thumbs up!' };
+  const LABEL = { [G.POINT]: 'drawing', [G.OPEN]: 'erasing', [G.THUMBS]: 'thumbs up!' };
 
   function drawCursor(t, now) {
-    const together = hands.filter(h => !h.lost).length === 2;
     const col = MARKERS[t.marker].color;
     const c = p.color(t.gesture === G.OPEN ? '#2d2a32' : col);
-    c.setAlpha(together ? 255 : 110);
-    p.noFill(); p.stroke(c); p.strokeWeight(t.gesture === G.PINCH ? 3 : 2);
+    c.setAlpha(t.lost ? 90 : 255);
+    p.noFill(); p.stroke(c); p.strokeWeight(t.gesture === G.POINT ? 3 : 2);
     if (t.gesture === G.OPEN) {
       p.drawingContext.setLineDash([5, 7]); sketchCircle(t.sx, t.sy, 28, t.id); p.drawingContext.setLineDash([]);
     } else {
@@ -318,7 +340,7 @@ new p5(p => {
       p.arc(t.sx, t.sy, 52, 52, -p.HALF_PI, -p.HALF_PI + k * p.TWO_PI);
     }
     const label = LABEL[t.gesture];
-    if (label && together) {
+    if (label && !t.lost) {
       p.noStroke(); p.fill(c); p.textSize(22); p.textAlign(p.LEFT, p.CENTER);
       p.text(label, t.sx + 24, t.sy - 22);
     }
@@ -346,6 +368,7 @@ new p5(p => {
     if (k === 'n') saveDrawing({ auto: true }).then(() => clearPage());
     if (k === 'x') clearPage();
     if (k === 'h') document.body.classList.toggle('hide-help');
+    if (k === 'd') state.debug = !state.debug;
     if (k === 'f') document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
   };
 });
@@ -357,8 +380,9 @@ $('#start').addEventListener('click', async () => {
   try {
     await Promise.all([initCamera(), initVision()]);
     ready = true;
+    state.startDetection();
     $('#intro').remove();
-    toast('Bring in two hands and pinch to draw!', 3200);
+    toast('Point a finger to draw!', 3200);
   } catch (e) {
     console.error(e);
     $('#start').textContent = 'try again';
