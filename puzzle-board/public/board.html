@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Piece of Home · Board</title>
+  <link rel="stylesheet" href="css/glass.css">
+  <link rel="stylesheet" href="css/board.css">
+</head>
+<body>
+  <div class="wallpaper" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+  <canvas id="gl"></canvas>
+  <canvas id="hands"></canvas>
+
+  <aside class="glass qr-card">
+    <img id="qr" alt="QR code to add your piece" src="/api/qr.svg">
+    <div>
+      <p class="eyebrow">Piece of Home</p>
+      <h1 id="question"></h1>
+      <p class="hint" id="hint"></p>
+      <p class="url" id="url"></p>
+    </div>
+  </aside>
+
+  <div class="glass pill counter"><b id="count">0</b>&nbsp;pieces of home · <span id="layout"></span></div>
+
+  <div class="glass help" id="help">
+    <div class="g"><span>🤏</span> pinch and move to turn</div>
+    <div class="g"><span>🤏🤏</span> two hands to zoom</div>
+    <div class="g"><span>🖐</span> hold your hand open to switch view</div>
+    <div class="m">mouse: drag · scroll · L switch · F fullscreen</div>
+  </div>
+
+  <div class="glass cambubble" id="cambubble" hidden><video id="cam" playsinline muted></video></div>
+
+  <div class="newpiece" id="newpiece">
+    <canvas></canvas>
+    <p class="glass pill">A new piece of home ✨</p>
+  </div>
+
+  <div class="glass pill offline" id="offline" hidden>Reconnecting to the server…</div>
+  <div class="debug" id="debug" hidden></div>
+
+  <script type="module" src="js/board.js"></script>
+</body>
+</html>

@@ -1,0 +1,102 @@
+# Piece of Home: glass puzzle board
+
+*Share your piece of home with the community.*
+
+A big shared board, on a laptop, TV or projector, made of glass puzzle pieces. Visitors scan the QR
+code on the board with their phone and get their own puzzle piece. They fill it with a photo, draw on
+it, add stickers and send it. A second later it pops up big on the board and then settles into the
+puzzle. The board can be turned and zoomed with hand gestures in front of the webcam.
+
+HvA playground project. Lives next to Doodle Away and reuses its hand tracking.
+
+## Run it
+
+You need [Node.js](https://nodejs.org) (the LTS download). Nothing to install with npm.
+
+- **Mac:** double-click `Start Puzzle Board.command` (the first time: right-click → Open).
+- **Anywhere:** in this folder run `node server.js`, then open http://localhost:8080 in Chrome.
+
+The terminal shows two addresses: the board (`localhost`) and the one for phones, which is also in
+the QR code. Press F on the board for fullscreen.
+
+### Getting phones connected
+
+The phone page opens in the browser, no app to install. There are two ways for phones to reach
+the laptop:
+
+1. **Same Wi-Fi (simplest, works offline).** Phones on the same network as the laptop can scan
+   and send. University Wi-Fi (eduroam) usually blocks phones from reaching a laptop, so at HvA
+   turn on your phone's or laptop's **hotspot** and put the laptop and visitors on that, or bring a
+   small travel router.
+2. **Public link over mobile data.** Install Cloudflare's free tunnel once
+   (`brew install cloudflared`), then start with `TUNNEL=1 node server.js`. After a few seconds the
+   QR code switches to a `https://….trycloudflare.com` address that works from any phone, on any
+   network. No account needed. The address changes every time you restart.
+
+You can also set your own address for the QR code: `PUBLIC_URL=https://example.com node server.js`.
+
+### Where things are saved
+
+Every piece is a JPEG in `data/pieces/`, listed in `data/pieces.json`. To start a fresh board,
+stop the server and delete the `data` folder. To keep an old board, rename the folder.
+
+## On the board
+
+| | What it does |
+| --- | --- |
+| 🤏 pinch (thumb on index) and move | turn the board; let go and it keeps spinning a little |
+| 🤏🤏 pinch with both hands | pull apart to zoom in, push together to zoom out, move both to slide |
+| 🖐 open hand, held still for a second | switch between the **puzzle wall** and the **sphere** |
+| mouse drag / scroll | turn / zoom (shift-drag to slide) |
+| `L` or space | switch wall ↔ sphere |
+| `F` | fullscreen |
+| `R` | reset the view |
+| `C` | show or hide the small camera preview |
+| `H` | show or hide the gesture help |
+| `D` | speed info (fps, pieces, draw calls, hand tracking) |
+| `X` / `Shift+X` | add 60 / 500 test pieces (only on screen, not saved) |
+
+When nobody is around for a while, the board drifts slowly by itself and switches between the
+wall and the sphere every 50 seconds, so it looks alive at an exhibition.
+
+The question, the idle times and more are in `public/js/config.js`.
+
+## On the phone
+
+1. **Your piece**: the shape you get is the next free spot in the puzzle, so it fits its neighbours.
+2. **Make it**: add a photo (camera or library), then
+   - ✋ **Move**: drag the photo or a sticker, pinch to zoom and turn;
+   - ✏️ **Draw**: 8 colours, 3 sizes, undo;
+   - ✨ **Stickers**: tap one to add it.
+   The dark area outside the outline is cut off on the board.
+3. **Send**: the board shows it big for a few seconds, then it flies into the puzzle.
+
+## How it works
+
+```
+phone (phone.html)  ── POST photo ──▶  server.js  ── live event ──▶  board (board.html)
+                                         saves to data/
+```
+
+- `server.js`: plain Node, no packages. Serves the pages, saves pieces, sends every new piece to
+  the board right away (Server-Sent Events), and makes the QR code.
+- `public/js/puzzle.js`: the puzzle shapes. Pieces fill a square spiral from the middle, so the
+  puzzle grows outwards. Each edge gets a tab that fits the neighbour.
+- `public/js/board.js`: the board in three.js. The glass look (curved edge, the picture bending
+  under it, shine and bright rim) is drawn by one shader. All pieces share a few big textures, so
+  the whole board is ~10 draw calls even with 500+ pieces. With `pieceTexture: 256` a normal
+  laptop holds about 1,500 pieces; set it to 128 for more.
+- `public/js/hands.js`: webcam + MediaPipe hand tracking. It uses the model, library and gesture
+  code from the Doodle Away folder above (`../models`, `../vendor`, `../js/gestures.js`), so keep
+  this folder inside the repo.
+- `public/js/phone.js`: the phone editor.
+
+Everything (three.js, MediaPipe, the model, the QR code maker) is in the repo, so the board also
+runs without internet.
+
+### Later, if you want it online
+
+For an online version (people adding pieces from home, a weekly archive), the server can be swapped
+for a hosted database like Supabase: the phone uploads the JPEG to its storage and the board
+listens for new rows. The pages wouldn't change much; only the `fetch('/api/…')` calls and the
+`EventSource` in `board.js` would.
