@@ -1,0 +1,57 @@
+html, body { height: 100%; overflow: hidden; overscroll-behavior: none; }
+body { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+button, label.btn, label.chip { font: inherit; color: inherit; border: 0; cursor: pointer; }
+
+.screen { position: relative; z-index: 1; height: 100dvh; display: flex; flex-direction: column; align-items: center;
+  padding: max(20px, env(safe-area-inset-top)) 18px max(18px, env(safe-area-inset-bottom)); text-align: center; }
+#intro, #sent { justify-content: center; gap: 10px; }
+.eyebrow { margin: 0; font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--accent); font-weight: 600; }
+h1 { margin: 4px 0 0; font-size: clamp(26px, 8vw, 36px); line-height: 1.08; letter-spacing: -0.02em; font-weight: 700; max-width: 14em; }
+.sub { margin: 0; color: var(--ink-soft); font-size: 16px; line-height: 1.4; max-width: 22em; }
+.preview { width: min(68vw, 46vh, 340px); height: auto; aspect-ratio: 1; margin: 6px 0; }
+.float { animation: float 5s ease-in-out infinite; }
+@keyframes float { 50% { transform: translateY(-8px) rotate(-2deg); } }
+.actions { display: grid; gap: 10px; width: min(100%, 340px); margin-top: 14px; }
+
+.btn { display: inline-flex; justify-content: center; align-items: center; gap: 0.4em; padding: 16px 22px; border-radius: 999px;
+  font-size: 17px; font-weight: 600; }
+.btn.primary { background: linear-gradient(180deg, #fff, #e9ecff); color: #15183a;
+  box-shadow: inset 0 1px 0 #fff, 0 10px 30px rgba(0,0,30,0.35), 0 0 0 1px rgba(255,255,255,0.6); }
+.btn.primary:active { transform: scale(0.97); }
+.btn.small { padding: 10px 18px; font-size: 16px; }
+.btn[disabled] { opacity: 0.55; }
+
+/* Editor */
+#editor { padding-left: 12px; padding-right: 12px; gap: 12px; }
+.top { width: 100%; display: flex; align-items: center; justify-content: space-between; }
+.top .title { font-weight: 600; color: var(--ink-soft); }
+.icon { width: 44px; height: 44px; border-radius: 50%; font-size: 26px; line-height: 1; padding-bottom: 3px; }
+.stage-wrap { flex: 1; min-height: 0; width: 100%; display: grid; place-items: center; }
+#stage { width: min(100%, 100%); max-height: 100%; aspect-ratio: 1; touch-action: none; display: block;
+  filter: drop-shadow(0 18px 30px rgba(0,0,20,0.45)); }
+
+.tools { width: 100%; max-width: 520px; padding: 10px; border-radius: 26px; display: grid; gap: 10px; }
+.modes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; background: rgba(0,0,0,0.18); border-radius: 999px; padding: 4px; }
+.mode { background: none; padding: 10px 0; border-radius: 999px; font-size: 15px; font-weight: 600; color: var(--ink-soft); }
+.mode.on { background: rgba(255,255,255,0.9); color: #15183a; box-shadow: 0 2px 10px rgba(0,0,0,0.2); }
+.panel { display: none; min-height: 84px; align-content: center; gap: 10px; }
+.panel.on { display: grid; }
+.tip { margin: 0; font-size: 14px; color: var(--ink-soft); }
+.chip { display: inline-flex; align-items: center; justify-content: center; gap: 0.3em; padding: 10px 16px; border-radius: 999px; font-size: 15px; font-weight: 600; justify-self: center; }
+.colors { display: flex; justify-content: space-between; gap: 6px; }
+.color { width: 34px; height: 34px; border-radius: 50%; box-shadow: inset 0 0 0 2px rgba(255,255,255,0.5), 0 2px 6px rgba(0,0,0,0.3); }
+.color.on { outline: 3px solid #fff; outline-offset: 3px; }
+.row { display: flex; align-items: center; justify-content: space-between; }
+.sizes { display: flex; gap: 8px; }
+.size { width: 40px; height: 40px; border-radius: 50%; background: rgba(255,255,255,0.12); display: grid; place-items: center; }
+.size i { display: block; background: #fff; border-radius: 50%; }
+.size.on { background: rgba(255,255,255,0.4); }
+.stickers { display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px; }
+.stickers button { background: none; font-size: 28px; padding: 4px 0; border-radius: 12px; }
+.stickers button:active { background: rgba(255,255,255,0.2); }
+
+.toast { position: fixed; z-index: 5; left: 50%; top: calc(max(20px, env(safe-area-inset-top)) + 58px); transform: translateX(-50%);
+  padding: 12px 20px; font-size: 15px; white-space: nowrap; }
+.sending #stage { animation: pulse 0.9s ease-in-out infinite; }
+@keyframes pulse { 50% { transform: scale(0.96); opacity: 0.8; } }
+[hidden] { display: none !important; }

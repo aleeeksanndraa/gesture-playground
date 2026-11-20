@@ -9,6 +9,9 @@ watch it being drawn again.
 
 HvA playground project.
 
+> Also in this repo: **[Piece of Home](puzzle-board/)**, a glass puzzle board that visitors add
+> photos to from their phones, turned with the same hand tracking.
+
 ## Run it
 
 No build step, and everything is in the repo (MediaPipe model, fonts, libraries), so it also works

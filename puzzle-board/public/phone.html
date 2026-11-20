@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#0b0d18">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>Piece of Home</title>
+  <link rel="stylesheet" href="css/glass.css">
+  <link rel="stylesheet" href="css/phone.css">
+</head>
+<body>
+  <div class="wallpaper" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+
+  <!-- 1. Your piece -->
+  <main class="screen" id="intro">
+    <p class="eyebrow">Piece of Home</p>
+    <h1 id="question"></h1>
+    <canvas class="preview float" id="introPiece" width="600" height="600"></canvas>
+    <p class="sub">This puzzle piece is yours. Fill it with a photo, draw on it, and send it to the big board.</p>
+    <div class="actions">
+      <label class="btn primary">
+        <input type="file" accept="image/*" id="photoIn" hidden>
+        📷 Add a photo
+      </label>
+      <button class="btn glass" id="justDraw">✏️ Just draw</button>
+    </div>
+  </main>
+
+  <!-- 2. Make it -->
+  <main class="screen" id="editor" hidden>
+    <header class="top">
+      <button class="icon glass" id="back" aria-label="Back">‹</button>
+      <span class="title">Your piece</span>
+      <button class="btn primary small" id="send">Send ✨</button>
+    </header>
+
+    <div class="stage-wrap"><canvas id="stage"></canvas></div>
+
+    <section class="tools glass">
+      <div class="modes" role="tablist">
+        <button class="mode" data-mode="move" role="tab">✋ Move</button>
+        <button class="mode" data-mode="draw" role="tab">✏️ Draw</button>
+        <button class="mode" data-mode="stickers" role="tab">✨ Stickers</button>
+      </div>
+      <div class="panel" data-panel="move">
+        <p class="tip">Drag with one finger, pinch to zoom and turn.</p>
+        <label class="chip glass"><input type="file" accept="image/*" id="photoIn2" hidden>📷 Change photo</label>
+      </div>
+      <div class="panel" data-panel="draw">
+        <div class="colors" id="colors"></div>
+        <div class="row">
+          <div class="sizes" id="sizes"></div>
+          <button class="chip glass" id="undo">↶ Undo</button>
+        </div>
+      </div>
+      <div class="panel" data-panel="stickers">
+        <div class="stickers" id="stickers"></div>
+      </div>
+    </section>
+  </main>
+
+  <!-- 3. Sent -->
+  <main class="screen" id="sent" hidden>
+    <p class="eyebrow">Sent</p>
+    <h1>Look at the board 👀</h1>
+    <canvas class="preview" id="sentPiece" width="600" height="600"></canvas>
+    <p class="sub">Your piece just joined the puzzle.</p>
+    <div class="actions"><button class="btn glass" id="again">Make another piece</button></div>
+  </main>
+
+  <div class="toast glass pill" id="toast" hidden></div>
+  <script type="module" src="js/phone.js"></script>
+</body>
+</html>
