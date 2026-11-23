@@ -43,8 +43,8 @@ stop the server and delete the `data` folder. To keep an old board, rename the f
 ## On the board
 
 The puzzle is not a flat sheet: it bulges towards you like part of a ball, and with a fist it
-curls all the way up into a sphere. Guide cards at the bottom of the screen light up for the
-gesture you are making.
+curls all the way up into a sphere. Guide cards on the left of the screen light up for the
+gesture you are making; the QR code sits on the right.
 
 | | What it does |
 | --- | --- |
