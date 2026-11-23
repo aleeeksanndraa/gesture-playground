@@ -464,7 +464,7 @@ function setPhoneUrl(url) {
 // ---------- view: rotation, zoom, layout ----------
 const view = {
   layout: CONFIG.startLayout === 'sphere' ? 'sphere' : 'wall',
-  yaw: 0, pitch: 0, roll: 0, vyaw: 0, vpitch: 0, vroll: 0, zoom: 1, pan: { x: 0, y: 0 }, dist: 10,
+  q: new THREE.Quaternion(), vyaw: 0, vpitch: 0, vroll: 0, zoom: 1, pan: { x: 0, y: 0 }, dist: 10,
   lastSwitch: performance.now(),
 };
 let lastInteract = -1e9;
@@ -476,11 +476,19 @@ function setLayout(l) {
   view.layout = l;
   view.lastSwitch = performance.now();
   view.pan = { x: 0, y: 0 }; view.zoom = 1;
-  if (view.layout === 'wall') { view.yaw = wrapAngle(view.yaw); }
   $('#layout').textContent = view.layout === 'wall' ? 'puzzle wall' : 'sphere';
 }
 const wrapAngle = a => Math.atan2(Math.sin(a), Math.cos(a));
 const touch = () => { lastInteract = performance.now(); };
+// Turn the puzzle freely (no limits, any direction) around the screen's axes: x = tip forward/back,
+// y = turn left/right, z = spin like a wheel. Works the same however it is already turned.
+const _dq = new THREE.Quaternion(), _ax = new THREE.Vector3();
+function turn(ax, ay, az) {
+  const a = Math.hypot(ax, ay, az);
+  if (a < 1e-6) return;
+  _dq.setFromAxisAngle(_ax.set(ax / a, ay / a, az / a), a);
+  view.q.premultiply(_dq).normalize();
+}
 
 function frame(nowMs) {
   const dt = Math.min(0.05, (nowMs - (frame.last || nowMs)) / 1000); frame.last = nowMs;
@@ -495,23 +503,20 @@ function frame(nowMs) {
 
   const idle = CONFIG.idleSeconds > 0 && nowMs - lastInteract > CONFIG.idleSeconds * 1000;
   if (idle) {
-    if (view.layout === 'sphere') { view.yaw += dt * 0.12; view.pitch += (Math.sin(time * 0.13) * 0.25 - view.pitch) * dt * 0.5; }
-    else {
-      view.yaw = wrapAngle(view.yaw);
-      view.yaw += (Math.sin(time * 0.11) * 0.35 - view.yaw) * dt * 0.6;
-      view.pitch += (Math.sin(time * 0.083) * 0.16 - view.pitch) * dt * 0.6;
-      view.zoom += (1 - view.zoom) * dt * 0.3;
-      view.pan.x += (0 - view.pan.x) * dt * 0.3; view.pan.y += (0 - view.pan.y) * dt * 0.3;
-    }
+    turn(0, dt * 0.08, 0);
+    view.zoom += (1 - view.zoom) * dt * 0.3;
+    view.pan.x += (0 - view.pan.x) * dt * 0.3; view.pan.y += (0 - view.pan.y) * dt * 0.3;
     if (CONFIG.autoSwitchSeconds > 0 && nowMs - view.lastSwitch > CONFIG.autoSwitchSeconds * 1000) toggleLayout();
   } else {
-    view.yaw += view.vyaw * dt; view.pitch += view.vpitch * dt;
+    turn(view.vpitch * dt, view.vyaw * dt, 0);
     const damp = Math.exp(-dt * 2.2); view.vyaw *= damp; view.vpitch *= damp;
   }
   // The finger swirl glides a moment after the finger stops, then the board stays put.
-  view.roll += view.vroll * dt; view.vroll *= Math.exp(-dt * 6);
-  view.pitch = clamp(view.pitch, -1.25, 1.25);
-  world.rotation.set(view.pitch, view.yaw, view.roll);
+  turn(0, 0, view.vroll * dt); view.vroll *= Math.exp(-dt * 6);
+  world.quaternion.copy(view.q);
+  // The curved wall turns around a point inside its bulge, so it stays in view at any angle.
+  const pivot = _ax.set(0, 0, -(1 - mix) * sharedUniforms.uWallR.value * 0.55);
+  world.position.copy(pivot).sub(pivot.clone().applyQuaternion(view.q));
 
   // Fit the camera to the puzzle (wall) or the sphere, then apply zoom and pan.
   const N = maxSlot + 1, half = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
@@ -555,7 +560,7 @@ canvas.addEventListener('pointermove', e => {
   const dx = e.clientX - drag.x, dy = e.clientY - drag.y, now = performance.now(), dts = Math.max(0.008, (now - drag.t) / 1000);
   if (drag.pan) { const k = view.dist * 0.0013; view.pan.x -= dx * k; view.pan.y += dy * k; }
   else {
-    view.yaw += dx * 0.005; view.pitch += dy * 0.005;
+    turn(dy * 0.005, dx * 0.005, 0);
     view.vyaw = dx * 0.005 / dts; view.vpitch = dy * 0.005 / dts;
   }
   drag.x = e.clientX; drag.y = e.clientY; drag.t = now; touch();
@@ -574,7 +579,7 @@ addEventListener('keydown', e => {
   else if (k === 'd') { debug = !debug; $('#debug').hidden = !debug; }
   else if (k === 'c') $('#cambubble').hidden = !$('#cambubble').hidden;
   else if (k === 'h') $('#gestures').hidden = !$('#gestures').hidden;
-  else if (k === 'r') { view.yaw = view.pitch = view.vyaw = view.vpitch = view.roll = view.vroll = 0; view.zoom = 1; view.pan = { x: 0, y: 0 }; }
+  else if (k === 'r') { view.q.identity(); view.vyaw = view.vpitch = view.vroll = 0; view.zoom = 1; view.pan = { x: 0, y: 0 }; }
   else if (k === 'x') addDemoPieces(e.shiftKey ? 500 : 60);
 });
 
@@ -665,7 +670,7 @@ function onHands(tr, now, G) {
       const asp = innerWidth / innerHeight;
       const ang = Math.atan2(b.y - a.y, (b.x - a.x) * asp), pang = Math.atan2(pb.y - pa.y, (pb.x - pa.x) * asp);
       const dr = wrapAngle(ang - pang);
-      if (Math.abs(dr) > 0.004 && Math.abs(dr) < 0.5) view.roll -= dr;
+      if (Math.abs(dr) > 0.004 && Math.abs(dr) < 0.5) turn(0, 0, -dr);
     }
   } else {
     palms = null;
@@ -679,16 +684,14 @@ function onHands(tr, now, G) {
     } else if (t && isFist(t)) {
       // ✊ grab: the board follows the hand, 1:1.
       mode = 'grab';
-      hint = 'holding · move your hand · open to let go';
+      hint = 'holding · turn it any way · open to let go';
       const cur = next.get(t.id), p = prev.get(t.id);
       if (p) {
         const dx = cur.x - p.x, dy = cur.y - p.y;
-        if (view.layout === 'wall') {
-          const visH = 2 * view.dist * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)), visW = visH * camera.aspect;
-          const lim = (view.side || 4) / 2;
-          view.pan.x = clamp(view.pan.x - dx * visW, -lim, lim);
-          view.pan.y = clamp(view.pan.y + dy * visH, -lim, lim);
-        } else { view.yaw += dx * Math.PI * 1.2; view.pitch += dy * 2.2; }
+        // Like holding a ball: move across the whole camera view = about one full turn.
+        const k = Math.PI * 1.6;
+        turn(dy * k, dx * k * innerWidth / innerHeight * 0.6, 0);
+
       }
     } else if (t) {
       mode = 'open';

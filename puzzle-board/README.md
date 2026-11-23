@@ -49,7 +49,7 @@ gesture you are making; the QR code sits on the right.
 | | What it does |
 | --- | --- |
 | ✋ open hand | just a pointer; nothing moves, a hint under your hand says what to do |
-| ✊ fist (grab) | you hold the board: it follows your hand (the wall slides, the sphere turns); open your hand to let go |
+| ✊ fist (grab) | you hold the puzzle like a ball: move your hand and it turns with it, 360° in any direction, no limits; open your hand to let go, grab again to keep turning |
 | ✊✊ two fists | pull them apart or push them towards the camera to come closer, bring them together to go back; twist them like a steering wheel to turn the puzzle |
 | ☝️ finger circles | draw circles in the air with your index finger and the puzzle swirls round like a whirlpool |
 | 👐 two open palms | bring them together to roll the puzzle into a sphere, pull them apart to open the wall |
