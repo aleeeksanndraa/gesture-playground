@@ -24,7 +24,7 @@ body:active { cursor: grabbing; }
   display: grid; gap: 1.2vmin; width: clamp(200px, 22vw, 320px); }
 .g { display: flex; align-items: center; gap: 1.2vmin; padding: 1.4vmin 1.8vmin; border-radius: 22px;
   transition: transform 0.35s cubic-bezier(.2, 1.4, .4, 1), box-shadow 0.35s; }
-.g .icon { font-size: clamp(24px, 3.6vmin, 44px); line-height: 1; filter: saturate(0.2) brightness(1.4); transition: filter 0.3s; }
+.g .icon { white-space: nowrap; min-width: 1.15em; text-align: center; font-size: clamp(24px, 3.6vmin, 44px); line-height: 1; filter: saturate(0.2) brightness(1.4); transition: filter 0.3s; }
 .g b { display: block; font-size: clamp(14px, 1.9vmin, 21px); letter-spacing: -0.01em; }
 .g span { display: block; font-size: clamp(11px, 1.35vmin, 15px); color: var(--ink-soft); margin-top: 0.15em; }
 .g.on { --glow: 1; transform: translateX(0.8vmin) scale(1.03); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.25), 0 20px 60px rgba(0,0,0,0.6); }
@@ -50,3 +50,4 @@ body:active { cursor: grabbing; }
 .debug { position: fixed; z-index: 6; left: 50%; top: 1vmin; transform: translateX(-50%); font: 12px ui-monospace, Menlo, monospace;
   color: #cfe; background: rgba(0,0,0,0.6); padding: 4px 10px; border-radius: 8px; }
 [hidden] { display: none !important; }
+.g .icon.two { font-size: clamp(14px, 2vmin, 24px); letter-spacing: -0.15em; }

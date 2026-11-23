@@ -515,7 +515,7 @@ function frame(nowMs) {
 
   // Fit the camera to the puzzle (wall) or the sphere, then apply zoom and pan.
   const N = maxSlot + 1, half = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
-  const side = Math.sqrt(ringCells(Math.max(1, N)));
+  const side = Math.sqrt(ringCells(Math.max(1, N))); view.side = side;
   const fitH = (side / 2 + 0.9) / half, fitW = (side / 2 + 0.9) / (half * camera.aspect);
   const dWall = Math.max(fitH, fitW), dSph = sphereRadius(N) * 2.9 + 1.5;
   const target = (dWall + (dSph - dWall) * mix) * view.zoom;
@@ -579,17 +579,19 @@ addEventListener('keydown', e => {
 });
 
 // ---------- hand gestures ----------
-// ✋ open hand  → the puzzle unfolds into the curved wall; move your hand to tilt it.
-// ✊ fist       → the puzzle curls up into a sphere; move your fist to turn it.
-// ☝️ finger     → draw circles in the air and the puzzle swirls round like a whirlpool.
-// 🙌 two hands  → stretch them apart (any direction, diagonal too) or push them towards the
-//                 camera to zoom in; bring them together or pull back to zoom out.
-// Nothing is moving on its own: drop your hands and the board stays exactly where you left it.
-let tracks = [], handStats = null, prev = new Map(), shape = { g: null, t: 0 }, active = null;
+// Made to feel like touching the board:
+// ✋ open hand    → just a pointer. Nothing moves, so raising a hand is never a surprise.
+// ✊ fist (grab)  → you hold the board: it follows your hand (wall slides, sphere turns). Open = let go.
+// ✊✊ two fists   → like holding a map with both hands: pull apart / push to the camera = closer,
+//                   together = further; twist them like a steering wheel to turn it round.
+// ☝️ finger       → draw circles in the air and the puzzle swirls round like a whirlpool.
+// 👐 two palms    → bring them together = roll into a sphere; pull them apart = open the wall.
+// Hands down: everything stays exactly where it was left.
+let tracks = [], handStats = null, prev = new Map(), active = null, hint = '';
 let swirl = { id: null, pts: [] };   // recent fingertip points of the pointing hand
+let palms = null;                     // distance between two open palms when they appeared
 const M = 0.1;   // ignore the outer 10% of the camera frame so people can reach the edges
 const toScreen = t => ({ x: clamp(((1 - t.x) - M) / (1 - 2 * M), 0, 1), y: clamp((t.y - M) / (1 - 2 * M), 0, 1) });
-const SHAPE_MS = 260;   // how long a hand shape must hold before the puzzle changes form
 const SWIRL_MS = 700;   // fingertip history used to find the centre of the circle
 
 async function initHands() {
@@ -634,45 +636,64 @@ function onHands(tr, now, G) {
   const isFist = t => t.gesture === G.FIST || t.gesture === G.PINCH || t.gesture === G.THUMBS;
   const isOpen = t => t.gesture === G.OPEN;
   const isPoint = t => t.gesture === G.POINT;
-  let mode = null;
+  let mode = null; hint = '';
+  view.vyaw = view.vpitch = 0;
 
   const two = tracks.slice(0, 2);
-  if (two.length === 2 && !two.some(isPoint)) {
-    // Zoom with both hands in any shape: spread (in any direction) and depth both count.
+  if (two.length === 2 && !two.some(isPoint) && two.every(isOpen)) {
+    // 👐 two palms: together = sphere, apart = wall.
+    mode = 'shape';
+    const [a, b] = two.map(t => next.get(t.id)), d = Math.hypot(a.x - b.x, a.y - b.y);
+    if (!palms) palms = d;
+    if (d < palms - 0.12 || d < 0.12) { setLayout('sphere'); palms = d; }
+    else if (d > palms + 0.12) { setLayout('wall'); palms = d; }
+    palms = view.layout === 'sphere' ? Math.min(palms, d) : Math.max(palms, d);
+    hint = view.layout === 'sphere' ? 'pull palms apart → open the wall' : 'bring palms together → sphere';
+  } else if (two.length === 2 && !two.some(isPoint)) {
+    // ✊✊ two fists: zoom by spread and depth, twist to turn.
+    palms = null;
     mode = 'zoom';
+    hint = 'apart = closer · together = further · twist = turn';
     const [a, b] = two.map(t => next.get(t.id)), [pa, pb] = two.map(t => prev.get(t.id));
     if (pa && pb) {
       const d = Math.hypot(a.x - b.x, a.y - b.y), pd = Math.hypot(pa.x - pb.x, pa.y - pb.y);
       let f = 1;
-      if (d > 0.03 && pd > 0.03) f *= pd / d;                       // apart = zoom in
+      if (d > 0.03 && pd > 0.03) f *= pd / d;
       const s = a.s + b.s, ps = pa.s + pb.s;
-      if (s > 0 && ps > 0 && Math.abs(ps / s - 1) > 0.012) f *= Math.pow(ps / s, 1.5);   // closer to the camera = zoom in (ignores jitter)
+      if (s > 0 && ps > 0 && Math.abs(ps / s - 1) > 0.012) f *= Math.pow(ps / s, 1.5);
       if (Math.abs(f - 1) > 0.004) view.zoom = clamp(view.zoom * Math.pow(f, 1.6), 0.15, 3);
+      const asp = innerWidth / innerHeight;
+      const ang = Math.atan2(b.y - a.y, (b.x - a.x) * asp), pang = Math.atan2(pb.y - pa.y, (pb.x - pa.x) * asp);
+      const dr = wrapAngle(ang - pang);
+      if (Math.abs(dr) > 0.004 && Math.abs(dr) < 0.5) view.roll -= dr;
     }
-    view.vyaw = view.vpitch = 0;
-    shape = { g: null, t: 0 };
   } else {
-    const t = tracks.find(isFist) || tracks.find(isOpen) || tracks.find(isPoint);
+    palms = null;
+    const t = tracks.find(isFist) || tracks.find(isPoint) || tracks.find(isOpen);
     if (t && isPoint(t)) {
       mode = 'swirl';
-      shape = { g: null, t: 0 };
+      hint = 'draw circles to swirl';
       const da = swirlStep(t, next.get(t.id), now);
-      // Clockwise finger = clockwise board. Smooth through a short glide velocity.
       const p = prev.get(t.id), dts = p ? Math.max(0.016, (now - p.t) / 1000) : 0.033;
       if (da) view.vroll = view.vroll * 0.6 + (-da * 0.7 / dts) * 0.4;
-    } else if (t) {
-      const want = isFist(t) ? 'fist' : 'open';
-      if (shape.g !== want) shape = { g: want, t: now };
-      if (now - shape.t > SHAPE_MS) setLayout(want === 'fist' ? 'sphere' : 'wall');
-      mode = want;
+    } else if (t && isFist(t)) {
+      // ✊ grab: the board follows the hand, 1:1.
+      mode = 'grab';
+      hint = 'holding · move your hand · open to let go';
       const cur = next.get(t.id), p = prev.get(t.id);
       if (p) {
         const dx = cur.x - p.x, dy = cur.y - p.y;
-        const k = want === 'fist' ? 4.5 : 2.2;
-        view.yaw += dx * k; view.pitch += dy * k * 0.75;
+        if (view.layout === 'wall') {
+          const visH = 2 * view.dist * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)), visW = visH * camera.aspect;
+          const lim = (view.side || 4) / 2;
+          view.pan.x = clamp(view.pan.x - dx * visW, -lim, lim);
+          view.pan.y = clamp(view.pan.y + dy * visH, -lim, lim);
+        } else { view.yaw += dx * Math.PI * 1.2; view.pitch += dy * 2.2; }
       }
-      view.vyaw = view.vpitch = 0;                    // no throwing: it stops when you stop
-    } else shape = { g: null, t: 0 };
+    } else if (t) {
+      mode = 'open';
+      hint = '✊ make a fist to grab';
+    }
     if (!t || !isPoint(t)) swirl = { id: null, pts: [] };
   }
   prev = next;
@@ -702,6 +723,18 @@ function drawHands(nowMs) {
       hctx.beginPath(); hctx.arc(q.x * sx * W, q.y * H, (2 + 4 * i / swirl.pts.length) * dpr, 0, 7);
       hctx.fillStyle = `rgba(63,240,200,${0.15 + 0.75 * i / swirl.pts.length})`; hctx.fill();
     });
+  }
+  if (hint && pts.length) {
+    const top = pts.reduce((m, q) => (q.y > m.y ? q : m), pts[0]);
+    const fs = 17 * dpr;
+    hctx.font = `600 ${fs}px -apple-system, system-ui, sans-serif`;
+    const w = hctx.measureText(hint).width + fs * 1.4, h = fs * 2;
+    const bx = clamp(top.x - w / 2, 8 * dpr, W - w - 8 * dpr), by = Math.min(H - h - 8 * dpr, top.y + 52 * dpr);
+    hctx.fillStyle = 'rgba(0,0,0,0.65)';
+    hctx.beginPath(); hctx.roundRect(bx, by, w, h, h / 2); hctx.fill();
+    hctx.strokeStyle = 'rgba(255,255,255,0.18)'; hctx.lineWidth = dpr; hctx.stroke();
+    hctx.fillStyle = '#fff'; hctx.textBaseline = 'middle'; hctx.textAlign = 'center';
+    hctx.fillText(hint, bx + w / 2, by + h / 2);
   }
   for (const { t, x, y } of pts) {
     const fist = t.gesture === G.FIST || t.gesture === G.PINCH || t.gesture === G.THUMBS;

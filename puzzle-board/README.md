@@ -42,17 +42,18 @@ stop the server and delete the `data` folder. To keep an old board, rename the f
 
 ## On the board
 
-The puzzle is not a flat sheet: it bulges towards you like part of a ball, and with a fist it
+The puzzle is not a flat sheet: it bulges towards you like part of a ball, and when you bring two open palms together it
 curls all the way up into a sphere. Guide cards on the left of the screen light up for the
 gesture you are making; the QR code sits on the right.
 
 | | What it does |
 | --- | --- |
-| ✋ open hand | the puzzle unfolds into the curved wall; move your hand to tilt it |
-| ✊ fist | the puzzle rolls up into a sphere; move your fist to turn it |
+| ✋ open hand | just a pointer; nothing moves, a hint under your hand says what to do |
+| ✊ fist (grab) | you hold the board: it follows your hand (the wall slides, the sphere turns); open your hand to let go |
+| ✊✊ two fists | pull them apart or push them towards the camera to come closer, bring them together to go back; twist them like a steering wheel to turn the puzzle |
 | ☝️ finger circles | draw circles in the air with your index finger and the puzzle swirls round like a whirlpool |
-| 🙌 two hands | stretch them apart (diagonally works too) or push them towards the camera to zoom in; bring them together or pull back to zoom out |
-| drop your hand | everything stays exactly where you left it |
+| 👐 two open palms | bring them together to roll the puzzle into a sphere, pull them apart to open the wall |
+| drop your hands | everything stays exactly where you left it |
 | mouse drag / scroll | turn / zoom (shift-drag to slide) |
 | `L` or space | switch wall ↔ sphere |
 | `F` | fullscreen |
