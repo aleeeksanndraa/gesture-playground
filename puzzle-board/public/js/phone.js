@@ -4,6 +4,7 @@
 import { CONFIG } from './config.js';
 import { edgesForSlot, tracePieceInSquare } from './puzzle.js';
 import { drawGlassPiece } from './glass2d.js';
+import { dotRing } from './dots.js';
 
 const $ = s => document.querySelector(s);
 const C = 1024;
@@ -20,12 +21,27 @@ const state = {
 };
 
 // ---------- screens ----------
-function show(id) { $('#toast').hidden = true; for (const s of document.querySelectorAll('.screen')) s.hidden = s.id !== id; if (id === 'editor') sizeStage(); }
+function show(id) {
+  $('#toast').hidden = true;
+  for (const s of document.querySelectorAll('.screen')) s.hidden = s.id !== id;
+  if (id === 'editor') sizeStage();
+  if (id === 'intro') startRing('introRing', '#7a5cff');
+  if (id === 'sent') { const r = startRing('sentRing', '#ff4fb8'); r.burst(); }
+}
 let toastTimer;
 function toast(msg, ms = 2600) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => t.hidden = true, ms); }
 
+function sizeRing(c) { const r = c.getBoundingClientRect(); c.width = c.height = Math.round(r.width * Math.min(devicePixelRatio, 2.5)); }
+const rings = {};
+function startRing(id, color) {
+  const c = $('#' + id);
+  if (!rings[id]) { sizeRing(c); rings[id] = dotRing(c, { color }); }
+  return rings[id];
+}
+
 async function fetchSlot() {
   try { const r = await (await fetch('/api/next', { cache: 'no-store' })).json(); state.slot = r.slot; } catch {}
+  $('#already').textContent = state.slot ? `${state.slot} pieces already on the board` : 'Be the first piece on the board';
   state.edges = edgesForSlot(state.slot);
   const c = $('#introPiece'), ctx = c.getContext('2d');
   ctx.clearRect(0, 0, c.width, c.height);
@@ -82,7 +98,7 @@ addEventListener('resize', () => { if (!$('#editor').hidden) sizeStage(); });
 
 function background(ctx) {
   const g = ctx.createLinearGradient(0, 0, C, C);
-  g.addColorStop(0, '#3a3f86'); g.addColorStop(0.55, '#6b4a9b'); g.addColorStop(1, '#d0708c');
+  g.addColorStop(0, '#14123a'); g.addColorStop(0.6, '#3b1d7a'); g.addColorStop(1, '#c026ff');
   ctx.fillStyle = g; ctx.fillRect(0, 0, C, C);
 }
 function drawObject(ctx, o) {
@@ -103,7 +119,7 @@ function render() {
   compose(sctx);
   // Dim everything outside your piece, then draw the glass rim.
   sctx.beginPath(); sctx.rect(0, 0, C, C); tracePieceInSquare(sctx, state.edges, C);
-  sctx.fillStyle = 'rgba(11,13,24,0.8)'; sctx.fill('evenodd');
+  sctx.fillStyle = 'rgba(0,0,0,0.82)'; sctx.fill('evenodd');
   sctx.beginPath(); tracePieceInSquare(sctx, state.edges, C);
   const rim = sctx.createLinearGradient(0, 0, C, C);
   rim.addColorStop(0, 'rgba(255,255,255,0.95)'); rim.addColorStop(0.5, 'rgba(255,255,255,0.4)'); rim.addColorStop(1, 'rgba(255,255,255,0.8)');
@@ -206,6 +222,7 @@ function setMode(m) {
   state.mode = m;
   for (const b of document.querySelectorAll('.mode')) b.classList.toggle('on', b.dataset.mode === m);
   for (const p of document.querySelectorAll('.panel')) p.classList.toggle('on', p.dataset.panel === m);
+  $('#tools').className = 'card tools ' + ({ move: 'blue', draw: 'amber', stickers: 'pink' })[m];
 }
 for (const b of document.querySelectorAll('.mode')) b.addEventListener('click', () => setMode(b.dataset.mode));
 
@@ -276,3 +293,4 @@ $('#again').addEventListener('click', () => {
 $('#question').textContent = CONFIG.question;
 setMode('draw');
 fetchSlot();
+show('intro');

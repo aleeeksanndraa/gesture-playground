@@ -16,8 +16,6 @@ export const CONFIG = {
 
   // Hand gestures (needs a webcam). Turn off to use only mouse and keyboard.
   gestures: true,
-  // Seconds an open hand must be held still to switch wall ↔ sphere.
-  palmHoldSeconds: 1.2,
 
   // Texture size of one piece on the board (px). Lower = more pieces fit in GPU memory.
   // 256 is good for about 1,500 pieces on a normal laptop; 128 for many thousands.

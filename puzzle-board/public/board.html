@@ -8,37 +8,48 @@
   <link rel="stylesheet" href="css/board.css">
 </head>
 <body>
-  <div class="wallpaper" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+  <div class="void" aria-hidden="true"></div>
   <canvas id="gl"></canvas>
   <canvas id="hands"></canvas>
 
-  <aside class="glass qr-card">
+  <aside class="card blue qr-card">
     <img id="qr" alt="QR code to add your piece" src="/api/qr.svg">
     <div>
-      <p class="eyebrow">Piece of Home</p>
+      <p class="label" id="hint"></p>
       <h1 id="question"></h1>
-      <p class="hint" id="hint"></p>
       <p class="url" id="url"></p>
     </div>
   </aside>
 
-  <div class="glass pill counter"><b id="count">0</b>&nbsp;pieces of home · <span id="layout"></span></div>
-
-  <div class="glass help" id="help">
-    <div class="g"><span>🤏</span> pinch and move to turn</div>
-    <div class="g"><span>🤏🤏</span> two hands to zoom</div>
-    <div class="g"><span>🖐</span> hold your hand open to switch view</div>
-    <div class="m">mouse: drag · scroll · L switch · F fullscreen</div>
+  <div class="counter">
+    <div class="big"><span id="count">0</span></div>
+    <div class="label">pieces of home · <span id="layout"></span></div>
   </div>
 
-  <div class="glass cambubble" id="cambubble" hidden><video id="cam" playsinline muted></video></div>
+  <nav class="gestures" id="gestures">
+    <div class="card teal dim g" data-g="open">
+      <div class="icon">✋</div>
+      <div><b>Open hand</b><span>unfold the puzzle · move to tilt</span></div>
+    </div>
+    <div class="card amber dim g" data-g="fist">
+      <div class="icon">✊</div>
+      <div><b>Fist</b><span>roll it into a sphere · move to spin</span></div>
+    </div>
+    <div class="card pink dim g" data-g="zoom">
+      <div class="icon">🙌</div>
+      <div><b>Two hands</b><span>apart to zoom in · together to zoom out</span></div>
+    </div>
+    <p class="mouse">no camera? drag · scroll · L switch · F fullscreen</p>
+  </nav>
+
+  <div class="card cambubble" id="cambubble" hidden><video id="cam" playsinline muted></video></div>
 
   <div class="newpiece" id="newpiece">
     <canvas></canvas>
-    <p class="glass pill">A new piece of home ✨</p>
+    <p class="card pink pill">A new piece of home</p>
   </div>
 
-  <div class="glass pill offline" id="offline" hidden>Reconnecting to the server…</div>
+  <div class="card pill offline" id="offline" hidden>Reconnecting to the server…</div>
   <div class="debug" id="debug" hidden></div>
 
   <script type="module" src="js/board.js"></script>

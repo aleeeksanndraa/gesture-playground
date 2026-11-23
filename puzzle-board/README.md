@@ -42,19 +42,27 @@ stop the server and delete the `data` folder. To keep an old board, rename the f
 
 ## On the board
 
+The puzzle is not a flat sheet: it bulges towards you like part of a ball, and with a fist it
+curls all the way up into a sphere. Guide cards at the bottom of the screen light up for the
+gesture you are making.
+
 | | What it does |
 | --- | --- |
-| 🤏 pinch (thumb on index) and move | turn the board; let go and it keeps spinning a little |
-| 🤏🤏 pinch with both hands | pull apart to zoom in, push together to zoom out, move both to slide |
-| 🖐 open hand, held still for a second | switch between the **puzzle wall** and the **sphere** |
+| ✋ open hand | the puzzle unfolds into the curved wall; move your hand to tilt it |
+| ✊ fist | the puzzle rolls up into a sphere; move your fist to spin it (it keeps spinning when you open) |
+| 🙌 two hands (open or fist) | move them apart to zoom in, together to zoom out |
+| drop your hand | everything stays as it is |
 | mouse drag / scroll | turn / zoom (shift-drag to slide) |
 | `L` or space | switch wall ↔ sphere |
 | `F` | fullscreen |
 | `R` | reset the view |
 | `C` | show or hide the small camera preview |
-| `H` | show or hide the gesture help |
+| `H` | show or hide the gesture guide |
 | `D` | speed info (fps, pieces, draw calls, hand tracking) |
 | `X` / `Shift+X` | add 60 / 500 test pieces (only on screen, not saved) |
+
+A ring of small dots sits behind the puzzle (it becomes a shell of dots around the sphere). When a
+new piece arrives, the dots next to it light up in the piece's colour.
 
 When nobody is around for a while, the board drifts slowly by itself and switches between the
 wall and the sphere every 50 seconds, so it looks alive at an exhibition.
@@ -89,7 +97,7 @@ phone (phone.html)  ── POST photo ──▶  server.js  ── live event �
 - `public/js/hands.js`: webcam + MediaPipe hand tracking. It uses the model, library and gesture
   code from the Doodle Away folder above (`../models`, `../vendor`, `../js/gestures.js`), so keep
   this folder inside the repo.
-- `public/js/phone.js`: the phone editor.
+- `public/js/phone.js`: the phone editor. `public/js/dots.js`: the dotted ring.
 
 Everything (three.js, MediaPipe, the model, the QR code maker) is in the repo, so the board also
 runs without internet.

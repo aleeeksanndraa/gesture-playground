@@ -1,14 +1,18 @@
-/* Shared "liquid glass" look for the board and the phone, iOS style:
-   frosted see-through panels, a bright rim on top, soft depth underneath. */
+/* Shared look for the board and the phone: pure black, small white dots, and dark cards that
+   glow in colour from the bottom edge. Glass pieces sit on top. */
 :root {
-  --ink: #f6f7ff;
-  --ink-soft: rgba(246, 247, 255, 0.72);
-  --bg: #0b0d18;
-  --glass: rgba(255, 255, 255, 0.12);
-  --glass-strong: rgba(255, 255, 255, 0.2);
-  --rim: rgba(255, 255, 255, 0.55);
-  --accent: #ffd98a;
-  --radius: 28px;
+  --ink: #f5f5f7;
+  --ink-soft: rgba(245, 245, 247, 0.62);
+  --ink-faint: rgba(245, 245, 247, 0.38);
+  --bg: #000;
+  --card: #0c0c10;
+  --line: rgba(255, 255, 255, 0.08);
+  /* glow colours */
+  --blue-1: #3b3bff; --blue-2: #7a5cff;
+  --amber-1: #ff5a1f; --amber-2: #ffc24a;
+  --pink-1: #c026ff; --pink-2: #ff4fb8;
+  --teal-1: #0aa5ff; --teal-2: #3ff0c8;
+  --radius: 26px;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", system-ui, Roboto, "Helvetica Neue", Arial, sans-serif;
   color: var(--ink);
   -webkit-font-smoothing: antialiased;
@@ -16,34 +20,34 @@
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: var(--bg); }
 
-.glass {
-  position: relative;
-  background:
-    linear-gradient(135deg, rgba(255,255,255,0.22), rgba(255,255,255,0.06) 45%, rgba(255,255,255,0.10));
-  -webkit-backdrop-filter: blur(22px) saturate(170%);
-  backdrop-filter: blur(22px) saturate(170%);
+/* Dark card with a coloured glow rising from the bottom. Set --c1/--c2 for the colour. */
+.card {
+  --c1: var(--blue-1); --c2: var(--blue-2);
+  position: relative; isolation: isolate; overflow: hidden;
+  background: var(--card);
   border-radius: var(--radius);
-  box-shadow:
-    inset 0 1px 0 rgba(255,255,255,0.65),
-    inset 0 -1px 0 rgba(255,255,255,0.12),
-    inset 0 0 0 1px rgba(255,255,255,0.14),
-    0 18px 50px rgba(0, 0, 20, 0.35);
+  box-shadow: inset 0 0 0 1px var(--line), inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 20px 50px rgba(0, 0, 0, 0.6);
 }
+.card::before {
+  content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(130% 95% at 55% 125%, var(--c2) 0%, transparent 60%),
+    radial-gradient(110% 85% at 20% 130%, var(--c1) 0%, transparent 68%),
+    linear-gradient(to top, color-mix(in srgb, var(--c1) 35%, transparent), transparent 55%);
+  opacity: var(--glow, 0.85);
+  transition: opacity 0.4s ease;
+}
+.card.dim { --glow: 0.18; }
+.blue { --c1: var(--blue-1); --c2: var(--blue-2); }
+.amber { --c1: var(--amber-1); --c2: var(--amber-2); }
+.pink { --c1: var(--pink-1); --c2: var(--pink-2); }
+.teal { --c1: var(--teal-1); --c2: var(--teal-2); }
 .pill { border-radius: 999px; }
 
-/* Soft moving colour blobs behind everything, like an iOS wallpaper. */
-.wallpaper { position: fixed; inset: 0; overflow: hidden; z-index: 0;
-  background: radial-gradient(120% 90% at 50% 0%, #1c2350 0%, #0b0d18 60%); }
-.wallpaper i { position: absolute; width: 48vmax; height: 48vmax; border-radius: 50%; filter: blur(70px); opacity: 0.55;
-  animation: drift 38s ease-in-out infinite alternate; }
-.wallpaper i:nth-child(1) { background: #6a5cff; left: -10vmax; top: -12vmax; }
-.wallpaper i:nth-child(2) { background: #ff7aa8; right: -14vmax; top: 10vmax; animation-duration: 46s; }
-.wallpaper i:nth-child(3) { background: #2ad1c9; left: 20vmax; bottom: -22vmax; animation-duration: 52s; }
-.wallpaper i:nth-child(4) { background: #ffb347; right: 15vmax; bottom: -10vmax; opacity: 0.35; animation-duration: 41s; }
-.wallpaper i:nth-child(5) { background: #4b8bff; left: 40vmax; top: 30vmax; opacity: 0.3; animation-duration: 60s; }
-@keyframes drift {
-  0% { transform: translate(0, 0) scale(1); }
-  50% { transform: translate(6vmax, -4vmax) scale(1.12); }
-  100% { transform: translate(-5vmax, 5vmax) scale(0.94); }
-}
-@media (prefers-reduced-motion: reduce) { .wallpaper i { animation: none; } }
+.big { font-weight: 700; letter-spacing: -0.035em; line-height: 0.95; font-variant-numeric: tabular-nums; }
+.big small { font-size: 0.42em; letter-spacing: 0; margin-left: 0.06em; font-weight: 600; }
+.label { font-size: 13px; color: var(--ink-soft); }
+
+/* Very faint light in the middle of the black, so glass has something to catch. */
+.void { position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background: radial-gradient(60% 50% at 50% 50%, rgba(60, 60, 110, 0.18), transparent 70%), #000; }

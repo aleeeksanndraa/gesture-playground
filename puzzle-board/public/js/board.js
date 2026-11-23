@@ -82,13 +82,13 @@ const maskTex = buildMasks();
 // ---------- glass shader ----------
 const VERT = /* glsl */`
 attribute vec3 aWall; attribute vec3 aSphA; attribute vec3 aSphB;
-attribute float aCell; attribute float aShape; attribute float aBirth;
-uniform float uMix, uSphT, uTime, uGap;
+attribute float aCell; attribute float aShape; attribute float aBirth; attribute vec3 aTint;
+uniform float uMix, uSphT, uTime, uGap, uWallR;
 varying vec2 vUv; varying float vCell, vShape, vGlow, vFade;
-varying vec3 vT, vB, vN, vWorld;
+varying vec3 vT, vB, vN, vWorld, vTint;
 void main() {
   vUv = vec2(uv.x, 1.0 - uv.y);
-  vCell = aCell; vShape = aShape;
+  vCell = aCell; vShape = aShape; vTint = aTint;
   float age = uTime - aBirth;
   float k = clamp(age / 1.1, 0.0, 1.0);
   float e = 1.0 - pow(1.0 - k, 3.0);
@@ -103,12 +103,18 @@ void main() {
   vec3 up = abs(n.y) > 0.98 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0);
   vec3 t = normalize(cross(up, n));
   vec3 b = cross(n, t);
-  vec3 pW = aWall + vec3(local.xy, lift);
+  // The puzzle wall is not flat: it lies on a big sphere, bulging towards you, so curling it
+  // up into the full sphere is one smooth movement.
+  float th = aWall.x / uWallR, ph = aWall.y / uWallR;
+  vec3 wn = vec3(sin(th) * cos(ph), sin(ph), cos(th) * cos(ph));
+  vec3 wt = vec3(cos(th), 0.0, -sin(th));
+  vec3 wb = cross(wn, wt);
+  vec3 pW = wn * uWallR - vec3(0.0, 0.0, uWallR) + wt * local.x + wb * local.y + wn * lift;
   vec3 pS = sph + t * local.x + b * local.y + n * lift;
   vec3 p = mix(pW, pS, uMix);
-  vec3 T = normalize(mix(vec3(1.0, 0.0, 0.0), t, uMix));
-  vec3 B = normalize(mix(vec3(0.0, 1.0, 0.0), b, uMix));
-  vec3 N = normalize(mix(vec3(0.0, 0.0, 1.0), n, uMix));
+  vec3 T = normalize(mix(wt, t, uMix));
+  vec3 B = normalize(mix(wb, b, uMix));
+  vec3 N = normalize(mix(wn, n, uMix));
   vec4 wp = modelMatrix * vec4(p, 1.0);
   vWorld = wp.xyz;
   mat3 m = mat3(modelMatrix);
@@ -121,7 +127,7 @@ uniform sampler2D uAtlas; uniform sampler2D uMasks;
 uniform float uCells, uEmpty, uMix;
 uniform vec3 uLight;
 varying vec2 vUv; varying float vCell, vShape, vGlow, vFade;
-varying vec3 vT, vB, vN, vWorld;
+varying vec3 vT, vB, vN, vWorld, vTint;
 vec2 cellUv(float idx, vec2 uv, float n) {
   idx = floor(idx + 0.5);                // varyings arrive as 2.9999 sometimes; snap to the cell
   float row = floor((idx + 0.5) / n);
@@ -146,7 +152,7 @@ void main() {
 
   vec3 col;
   if (uEmpty > 0.5) {
-    col = vec3(0.80, 0.86, 1.0) * 0.45;
+    col = vec3(0.55, 0.6, 0.8) * 0.3;
   } else {
     // Refraction: the picture bends a little under the curved glass edge.
     vec2 off = vec2(nT.x, -nT.y) * 0.07 * rim;
@@ -163,7 +169,10 @@ void main() {
   float line = (1.0 - smoothstep(0.0, 0.25, h)) * smoothstep(0.03, 0.5, a);
   col = col * (0.9 + 0.1 * dot(Nw, L));
   col += vec3(1.0) * (spec * 1.2 + spec2 + fres * 0.3 + sheen + line * 0.3);
-  col += vec3(1.0, 0.9, 0.7) * vGlow * (0.18 + rim * 0.8);
+  // Each piece glows in its own colour from the bottom edge, like a lit card.
+  float bottom = smoothstep(0.45, 1.0, vUv.y);
+  col += vTint * (bottom * 0.22 + rim * 0.35);
+  col += vTint * vGlow * (0.25 + rim * 1.2);
   if (!gl_FrontFacing) col *= 0.42;
 
   float alpha = a * vFade;
@@ -178,6 +187,7 @@ const sharedUniforms = {
   uSphT: { value: 1 },
   uTime: { value: 0 },
   uGap: { value: 0.985 },
+  uWallR: { value: 4 },
   uMasks: { value: maskTex },
   uLight: { value: new THREE.Vector3(-0.45, 0.65, 0.75) },
 };
@@ -190,7 +200,7 @@ function makeMaterial(atlas, cells, empty) {
 }
 
 // ---------- instanced layers ----------
-const ATTRS = { aWall: 3, aSphA: 3, aSphB: 3, aCell: 1, aShape: 1, aBirth: 1 };
+const ATTRS = { aWall: 3, aSphA: 3, aSphB: 3, aCell: 1, aShape: 1, aBirth: 1, aTint: 3 };
 class Layer {
   constructor(material, capacity, renderOrder = 0) {
     const plane = new THREE.PlaneGeometry(QUAD, QUAD);
@@ -239,6 +249,83 @@ function page(k) {
 // Empty slots around the puzzle, so you can see where the next pieces will go.
 let empties = new Layer(makeMaterial(null, 1, true), 512, 2);
 
+// ---------- dotted halo ----------
+// A ring of small dots behind the puzzle wall that becomes a shell of dots around the sphere.
+// A few dots light up in colour: they slowly circle while the board waits, and jump to a new
+// piece when it arrives.
+const HALO = 1400;
+const halo = (() => {
+  const ring = new Float32Array(HALO * 3), shell = new Float32Array(HALO * 3), rnd = new Float32Array(HALO);
+  const RINGS = 7;
+  let k = 0;
+  const weights = Array.from({ length: RINGS }, (_, i) => 1 + i * 0.06);
+  const total = weights.reduce((a, b) => a + b, 0);
+  for (let r = 0; r < RINGS; r++) {
+    const n = r === RINGS - 1 ? HALO - k : Math.round(HALO * weights[r] / total);
+    const rad = 1 + r * 0.055;
+    for (let i = 0; i < n; i++, k++) {
+      const a = (i + (r % 2) * 0.5) / n * Math.PI * 2;
+      ring.set([Math.cos(a) * rad, Math.sin(a) * rad, -0.05 * r], k * 3);
+    }
+  }
+  for (let i = 0; i < HALO; i++) {
+    const z = 1 - 2 * (i + 0.5) / HALO, r = Math.sqrt(1 - z * z), th = i * 2.399963;
+    shell.set([r * Math.cos(th), r * Math.sin(th), z], i * 3);
+    rnd[i] = Math.random();
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(shell, 3));
+  g.setAttribute('aRing', new THREE.BufferAttribute(ring, 3));
+  g.setAttribute('aRnd', new THREE.BufferAttribute(rnd, 1));
+  const uniforms = {
+    uMix: sharedUniforms.uMix, uTime: sharedUniforms.uTime,
+    uRingR: { value: 4 }, uShellR: { value: 4 }, uPix: { value: renderer.getPixelRatio() },
+    uHiDir: { value: new THREE.Vector3(0, 1, 0) }, uHiCol: { value: new THREE.Color(1, 1, 1) }, uHiAmt: { value: 0.8 },
+  };
+  const m = new THREE.ShaderMaterial({
+    uniforms, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    vertexShader: /* glsl */`
+      attribute vec3 aRing; attribute float aRnd;
+      uniform float uMix, uTime, uRingR, uShellR, uPix, uHiAmt; uniform vec3 uHiDir;
+      varying float vA, vHi;
+      void main() {
+        vec3 p = mix(aRing * uRingR, position * uShellR, uMix);
+        float hi = smoothstep(0.93, 0.995, dot(normalize(p + vec3(0.0, 0.0, 1e-4)), uHiDir)) * uHiAmt;
+        vHi = hi;
+        vA = 0.35 + 0.45 * (0.5 + 0.5 * sin(uTime * (0.6 + aRnd * 1.4) + aRnd * 40.0));
+        vec4 mv = modelViewMatrix * vec4(p, 1.0);
+        gl_PointSize = (1.6 + aRnd * 1.6 + hi * 7.0) * uPix * (14.0 / max(1.0, -mv.z));
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader: /* glsl */`
+      uniform vec3 uHiCol;
+      varying float vA, vHi;
+      void main() {
+        float d = length(gl_PointCoord - 0.5);
+        float core = 1.0 - smoothstep(0.25, 0.5, d);
+        float glow = exp(-d * 6.0) * vHi;
+        vec3 c = mix(vec3(1.0), uHiCol * 1.5, vHi);
+        float a = core * mix(vA, 1.0, vHi) + glow;
+        if (a < 0.01) discard;
+        gl_FragColor = vec4(c * a, a);
+      }`,
+  });
+  const pts = new THREE.Points(g, m);
+  pts.frustumCulled = false;
+  world.add(pts);
+  return { uniforms, hit: null };
+})();
+// Light up the halo next to a piece, in its colour.
+function flashHalo(slot, tint) {
+  const { x, y } = spiral(slot);
+  const N = maxSlot + 1, j = N - 1 - slot;
+  const z = 1 - 2 * (j + 0.5) / N, r = Math.sqrt(Math.max(0, 1 - z * z)), th = j * 2.399963;
+  const wall = new THREE.Vector3(x, -y, 0), sph = new THREE.Vector3(r * Math.cos(th), r * Math.sin(th), z);
+  if (wall.lengthSq() < 0.01) wall.set(0, 1, 0);
+  halo.hit = { wall: wall.normalize(), sph, t: performance.now() };
+  halo.uniforms.uHiCol.value.setRGB(...tint);
+}
+
 // ---------- pieces ----------
 const bySlot = new Map();   // slot → piece
 let maxSlot = -1;
@@ -256,14 +343,32 @@ function addPiece(p, img, birth) {
   L.set(cell, 'aCell', cell);
   L.set(cell, 'aShape', shapeIndex(edgesForSlot(slot)));
   L.set(cell, 'aBirth', birth);
+  const tint = tintOf(img);
+  L.set(cell, 'aTint', ...tint);
   L.geometry.instanceCount = Math.max(L.geometry.instanceCount, cell + 1);
-  bySlot.set(slot, { ...p, slot, cell, page: pg, fresh: true });
+  bySlot.set(slot, { ...p, slot, cell, page: pg, fresh: true, tint });
   maxSlot = Math.max(maxSlot, slot);
+  if (birth > 0) flashHalo(slot, tint);
   dirty.sphere = dirty.empties = true;
   $('#count').textContent = bySlot.size;
 }
 
-function sphereRadius(n) { return Math.max(2.4, 0.5 * Math.sqrt(n)); }
+// A piece's glow colour: its average colour, made vivid.
+const tintCanvas = document.createElement('canvas'); tintCanvas.width = tintCanvas.height = 4;
+const tintCtx = tintCanvas.getContext('2d', { willReadFrequently: true });
+function tintOf(img) {
+  tintCtx.clearRect(0, 0, 4, 4); tintCtx.drawImage(img, 0, 0, 4, 4);
+  const d = tintCtx.getImageData(0, 0, 4, 4).data;
+  let r = 0, g = 0, b = 0;
+  for (let i = 0; i < 64; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; }
+  const c = new THREE.Color(r / 4080, g / 4080, b / 4080), hsl = {};
+  c.getHSL(hsl);
+  if (hsl.s < 0.12) return [0.55, 0.65, 1.0];          // grey photos get a cool white-blue
+  c.setHSL(hsl.h, Math.max(0.75, hsl.s), 0.55);
+  return [c.r, c.g, c.b];
+}
+
+function sphereRadius(n) { return Math.max(1.7, 0.4 * Math.sqrt(n)); }
 let sphT = { from: 0, start: 0 };
 function updateSphere(now) {
   const N = maxSlot + 1, R = sphereRadius(N), t = sharedUniforms.uSphT.value;
@@ -292,6 +397,7 @@ function updateEmpties() {
     empties.set(i, 'aWall', x, -y, 0);
     empties.set(i, 'aShape', shapeIndex(edgesForSlot(slot)));
     empties.set(i, 'aBirth', -1000);
+    empties.set(i, 'aTint', 0.35, 0.45, 1.0);
     empties.set(i, 'aSphA', 0, 0, 1); empties.set(i, 'aSphB', 0, 0, 1);
   }
   empties.geometry.instanceCount = need;
@@ -364,8 +470,10 @@ const view = {
 let lastInteract = -1e9;
 const t0 = performance.now();
 const clock = () => (performance.now() - t0) / 1000;
-function toggleLayout() {
-  view.layout = view.layout === 'wall' ? 'sphere' : 'wall';
+function toggleLayout() { setLayout(view.layout === 'wall' ? 'sphere' : 'wall'); }
+function setLayout(l) {
+  if (view.layout === l) return;
+  view.layout = l;
   view.lastSwitch = performance.now();
   view.pan = { x: 0, y: 0 }; view.zoom = 1;
   if (view.layout === 'wall') { view.yaw = wrapAngle(view.yaw); }
@@ -414,6 +522,23 @@ function frame(nowMs) {
   camera.position.set(px, py, view.dist);
   camera.lookAt(px, py, 0);
 
+  sharedUniforms.uWallR.value = Math.max(3.2, side * 0.62);
+  const hu = halo.uniforms;
+  const wr = sharedUniforms.uWallR.value;
+  hu.uRingR.value = wr * Math.sin(Math.min(side / 2 / wr, 1.4)) * 1.12 + 0.35;
+  hu.uShellR.value = sphereRadius(N) * 1.2;
+  empties.mesh.visible = mix < 0.97;
+  if (halo.hit && nowMs - halo.hit.t < 7000) {
+    hu.uHiDir.value.copy(halo.hit.wall).lerp(halo.hit.sph, mix).normalize();
+    hu.uHiAmt.value = 1 - clamp((nowMs - halo.hit.t - 4000) / 3000, 0, 1) * 0.3;
+  } else {
+    // Idle: a small cluster of lit dots travels around, changing colour.
+    const a = time * 0.35;
+    hu.uHiDir.value.set(Math.cos(a), Math.sin(a), Math.sin(time * 0.21) * 0.4 * mix).normalize();
+    hu.uHiCol.value.setHSL((time * 0.03) % 1, 0.85, 0.6);
+    hu.uHiAmt.value = 0.7;
+  }
+
   renderer.render(scene, camera);
   drawHands(nowMs);
   if (debug) showDebug(dt);
@@ -446,82 +571,106 @@ addEventListener('keydown', e => {
   else if (k === 'l' || k === ' ') { toggleLayout(); touch(); }
   else if (k === 'd') { debug = !debug; $('#debug').hidden = !debug; }
   else if (k === 'c') $('#cambubble').hidden = !$('#cambubble').hidden;
-  else if (k === 'h') $('#help').hidden = !$('#help').hidden;
+  else if (k === 'h') $('#gestures').hidden = !$('#gestures').hidden;
   else if (k === 'r') { view.yaw = view.pitch = view.vyaw = view.vpitch = 0; view.zoom = 1; view.pan = { x: 0, y: 0 }; }
   else if (k === 'x') addDemoPieces(e.shiftKey ? 500 : 60);
 });
 
 // ---------- hand gestures ----------
-let tracks = [], handStats = null, prevPinch = new Map(), palm = null, palmCooldown = 0;
+// ✋ open hand  → the puzzle unfolds into the curved wall; move your hand to tilt it.
+// ✊ fist       → the puzzle curls up into a sphere; move your fist to spin it, open to let go.
+// 🙌 two hands  → move them apart to zoom in, together to zoom out.
+// Dropping your hand (out of view) leaves everything as it is.
+let tracks = [], handStats = null, prev = new Map(), shape = { g: null, t: 0 }, active = null;
 const M = 0.1;   // ignore the outer 10% of the camera frame so people can reach the edges
 const toScreen = t => ({ x: clamp(((1 - t.x) - M) / (1 - 2 * M), 0, 1), y: clamp((t.y - M) / (1 - 2 * M), 0, 1) });
+const SHAPE_MS = 260;   // how long a hand shape must hold before the puzzle changes form
 
 async function initHands() {
-  if (!CONFIG.gestures) return;
+  if (!CONFIG.gestures) { $('#gestures').hidden = true; return; }
   try {
     const { startHands, G } = await import('./hands.js');
     handStats = await startHands($('#cam'), (tr, now) => onHands(tr, now, G));
     $('#cambubble').hidden = false;
   } catch (err) {
     console.warn('Hand tracking off:', err);
-    $('#help').classList.add('nohands');
+    $('#gestures').classList.add('nohands');
   }
 }
 
 function onHands(tr, now, G) {
+  onHands.G = G;
   tracks = tr.filter(t => !t.lost);
   if (tracks.length) touch();
-  const pinching = tracks.filter(t => t.gesture === G.PINCH);
-  const next = new Map(pinching.map(t => [t.id, { ...toScreen(t), t: now }]));
+  const next = new Map(tracks.map(t => [t.id, { ...toScreen(t), t: now }]));
+  const isFist = t => t.gesture === G.FIST || t.gesture === G.PINCH || t.gesture === G.THUMBS;
+  const isOpen = t => t.gesture === G.OPEN;
+  let mode = null;
 
-  if (pinching.length === 1) {
-    const cur = next.get(pinching[0].id), prev = prevPinch.get(pinching[0].id);
-    if (prev) {
-      const dx = cur.x - prev.x, dy = cur.y - prev.y, dts = Math.max(0.01, (now - prev.t) / 1000);
-      view.yaw += dx * 4; view.pitch += dy * 3;
-      view.vyaw = view.vyaw * 0.5 + (dx * 4 / dts) * 0.5;
-      view.vpitch = view.vpitch * 0.5 + (dy * 3 / dts) * 0.5;
-    } else { view.vyaw = view.vpitch = 0; }
-  } else if (pinching.length === 2) {
-    const [a, b] = pinching.map(t => next.get(t.id));
-    const [pa, pb] = pinching.map(t => prevPinch.get(t.id));
+  const two = tracks.slice(0, 2);
+  if (two.length === 2 && two.every(t => isFist(t) || isOpen(t))) {
+    mode = 'zoom';
+    const [a, b] = two.map(t => next.get(t.id)), [pa, pb] = two.map(t => prev.get(t.id));
     if (pa && pb) {
       const d = Math.hypot(a.x - b.x, a.y - b.y), pd = Math.hypot(pa.x - pb.x, pa.y - pb.y);
-      if (d > 0.02 && pd > 0.02) view.zoom = clamp(view.zoom * (pd / d), 0.12, 3);
-      const mx = (a.x + b.x - pa.x - pb.x) / 2, my = (a.y + b.y - pa.y - pb.y) / 2;
-      const w = view.dist * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * 2;
-      view.pan.x -= mx * w * camera.aspect; view.pan.y += my * w;
+      if (d > 0.03 && pd > 0.03) view.zoom = clamp(view.zoom * Math.pow(pd / d, 1.6), 0.15, 3);
     }
-    view.vyaw = view.vpitch = 0;
+    view.vyaw *= 0.8; view.vpitch *= 0.8;
+    shape = { g: null, t: 0 };
+  } else {
+    const t = tracks.find(isFist) || tracks.find(isOpen);
+    if (t) {
+      const want = isFist(t) ? 'fist' : 'open';
+      if (shape.g !== want) shape = { g: want, t: now };
+      if (now - shape.t > SHAPE_MS) setLayout(want === 'fist' ? 'sphere' : 'wall');
+      mode = want;
+      const cur = next.get(t.id), p = prev.get(t.id);
+      if (p) {
+        const dx = cur.x - p.x, dy = cur.y - p.y, dts = Math.max(0.01, (now - p.t) / 1000);
+        const k = want === 'fist' ? 4.5 : 2.2;
+        view.yaw += dx * k; view.pitch += dy * k * 0.75;
+        if (want === 'fist') {                       // a fist can throw the sphere
+          view.vyaw = view.vyaw * 0.5 + (dx * k / dts) * 0.5;
+          view.vpitch = view.vpitch * 0.5 + (dy * k * 0.75 / dts) * 0.5;
+        } else { view.vyaw *= 0.85; view.vpitch *= 0.85; }
+      }
+    } else shape = { g: null, t: 0 };
   }
-  prevPinch = next;
-
-  // Open hand held still → switch puzzle wall ↔ sphere.
-  const open = pinching.length === 0 && tracks.find(t => t.gesture === G.OPEN);
-  if (open && now > palmCooldown) {
-    const p = toScreen(open);
-    if (!palm || palm.id !== open.id || Math.hypot(p.x - palm.x, p.y - palm.y) > 0.08) palm = { id: open.id, x: p.x, y: p.y, start: now };
-    palm.progress = (now - palm.start) / (CONFIG.palmHoldSeconds * 1000);
-    if (palm.progress >= 1) { toggleLayout(); palm = null; palmCooldown = now + 2500; }
-  } else palm = null;
-  onHands.G = G;
+  prev = next;
+  if (mode !== active) {
+    active = mode;
+    for (const el of document.querySelectorAll('#gestures [data-g]')) el.classList.toggle('on', el.dataset.g === mode);
+  }
 }
 
-function drawHands() {
+// Hand cursors in the same dotted style: an open ring of dots for an open hand, a tight
+// glowing cluster for a fist, and a dotted line between two hands while zooming.
+function drawHands(nowMs) {
   const W = handCanvas.width, H = handCanvas.height, dpr = devicePixelRatio;
   hctx.clearRect(0, 0, W, H);
   const G = onHands.G;
   if (!G) return;
-  for (const t of tracks) {
-    const p = toScreen(t), x = p.x * W, y = p.y * H;
-    const pinch = t.gesture === G.PINCH;
-    const r = (pinch ? 16 : 24) * dpr;
-    hctx.beginPath(); hctx.arc(x, y, r, 0, Math.PI * 2);
-    hctx.fillStyle = pinch ? 'rgba(255,255,255,0.55)' : 'rgba(255,255,255,0.16)'; hctx.fill();
-    hctx.lineWidth = 2 * dpr; hctx.strokeStyle = 'rgba(255,255,255,0.85)'; hctx.stroke();
-    if (palm && palm.id === t.id) {
-      hctx.beginPath(); hctx.arc(x, y, r + 10 * dpr, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * clamp(palm.progress, 0, 1));
-      hctx.lineWidth = 5 * dpr; hctx.strokeStyle = 'rgba(255,240,200,0.95)'; hctx.lineCap = 'round'; hctx.stroke();
+  const spin = nowMs / 1000;
+  const pts = tracks.map(t => { const p = toScreen(t); return { t, x: p.x * W, y: p.y * H }; });
+  if (active === 'zoom' && pts.length >= 2) {
+    const [a, b] = pts, n = Math.max(6, Math.round(Math.hypot(b.x - a.x, b.y - a.y) / (14 * dpr)));
+    hctx.fillStyle = 'rgba(255,255,255,0.55)';
+    for (let i = 1; i < n; i++) { hctx.beginPath(); hctx.arc(a.x + (b.x - a.x) * i / n, a.y + (b.y - a.y) * i / n, 1.8 * dpr, 0, 7); hctx.fill(); }
+  }
+  for (const { t, x, y } of pts) {
+    const fist = t.gesture === G.FIST || t.gesture === G.PINCH || t.gesture === G.THUMBS;
+    const open = t.gesture === G.OPEN;
+    const n = fist ? 8 : 16, r = (fist ? 14 : open ? 34 : 22) * dpr;
+    for (let i = 0; i < n; i++) {
+      const a = i / n * Math.PI * 2 + spin * (fist ? 2.4 : 0.6);
+      hctx.beginPath(); hctx.arc(x + Math.cos(a) * r, y + Math.sin(a) * r, (fist ? 3 : 2.4) * dpr, 0, 7);
+      hctx.fillStyle = fist ? 'rgba(255,170,120,0.95)' : open ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.45)';
+      hctx.fill();
+    }
+    if (fist) {
+      const g = hctx.createRadialGradient(x, y, 0, x, y, r * 1.6);
+      g.addColorStop(0, 'rgba(255,140,90,0.55)'); g.addColorStop(1, 'rgba(255,140,90,0)');
+      hctx.fillStyle = g; hctx.beginPath(); hctx.arc(x, y, r * 1.6, 0, 7); hctx.fill();
     }
   }
 }

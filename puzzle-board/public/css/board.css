@@ -3,39 +3,45 @@ body:active { cursor: grabbing; }
 #gl, #hands { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 1; display: block; }
 #hands { pointer-events: none; z-index: 5; }
 
-.qr-card { position: fixed; z-index: 3; left: 2.2vmin; top: 2.2vmin; display: flex; align-items: center; gap: 1.6vmin;
-  padding: 1.6vmin 2.4vmin 1.6vmin 1.6vmin; max-width: min(46vw, 640px); }
-.qr-card img { width: clamp(110px, 15vmin, 200px); aspect-ratio: 1; border-radius: 18px; background: #fff; padding: 8px;
-  box-shadow: 0 6px 20px rgba(0,0,0,0.25); }
-.qr-card h1 { margin: 0.2em 0 0.25em; font-size: clamp(20px, 3.1vmin, 40px); line-height: 1.08; font-weight: 700; letter-spacing: -0.02em; }
-.eyebrow { margin: 0; font-size: clamp(11px, 1.4vmin, 15px); text-transform: uppercase; letter-spacing: 0.14em; color: var(--accent); font-weight: 600; }
-.hint { margin: 0; font-size: clamp(14px, 2vmin, 22px); color: var(--ink-soft); }
-.url { margin: 0.5em 0 0; font-size: clamp(10px, 1.2vmin, 13px); color: rgba(255,255,255,0.45); word-break: break-all; }
+.qr-card { position: fixed; z-index: 3; left: 2.4vmin; top: 2.4vmin; display: flex; align-items: center; gap: 1.8vmin;
+  padding: 1.4vmin 2.6vmin 1.4vmin 1.4vmin; max-width: min(44vw, 620px); }
+.qr-card img { width: clamp(100px, 13vmin, 180px); aspect-ratio: 1; border-radius: 16px; background: #fff; padding: 7px; }
+.qr-card h1 { margin: 0.15em 0 0.2em; font-size: clamp(20px, 3vmin, 38px); line-height: 1.05; font-weight: 700; letter-spacing: -0.025em; }
+.qr-card .label { margin: 0; font-size: clamp(12px, 1.6vmin, 17px); }
+.url { margin: 0.4em 0 0; font-size: clamp(10px, 1.15vmin, 13px); color: var(--ink-faint); word-break: break-all; }
 
-.counter { position: fixed; z-index: 3; right: 2.2vmin; top: 2.2vmin; padding: 0.7em 1.2em; font-size: clamp(13px, 1.7vmin, 18px); color: var(--ink-soft); }
-.counter b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.counter { position: fixed; z-index: 3; right: 3vmin; top: 2.4vmin; text-align: right; }
+.counter .big { font-size: clamp(44px, 8vmin, 110px); }
+.counter .label { font-size: clamp(12px, 1.6vmin, 17px); margin-top: 0.4em; }
 
-.help { position: fixed; z-index: 3; left: 2.2vmin; bottom: 2.2vmin; padding: 1em 1.3em; font-size: clamp(12px, 1.6vmin, 16px);
-  display: grid; gap: 0.35em; color: var(--ink-soft); border-radius: 22px; }
-.help span { display: inline-block; min-width: 2.2em; }
-.help .m { font-size: 0.82em; color: rgba(255,255,255,0.45); margin-top: 0.25em; }
-.help.nohands .g { display: none; }
+/* Gesture guide: the card of the gesture you're making lights up. */
+.gestures { position: fixed; z-index: 3; left: 50%; bottom: 2.4vmin; transform: translateX(-50%);
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1.2vmin; width: min(92vw, 980px); }
+.g { display: flex; align-items: center; gap: 1.2vmin; padding: 1.4vmin 1.8vmin; border-radius: 22px;
+  transition: transform 0.35s cubic-bezier(.2, 1.4, .4, 1), box-shadow 0.35s; }
+.g .icon { font-size: clamp(24px, 3.6vmin, 44px); line-height: 1; filter: saturate(0.2) brightness(1.4); transition: filter 0.3s; }
+.g b { display: block; font-size: clamp(14px, 1.9vmin, 21px); letter-spacing: -0.01em; }
+.g span { display: block; font-size: clamp(11px, 1.35vmin, 15px); color: var(--ink-soft); margin-top: 0.15em; }
+.g.on { --glow: 1; transform: translateY(-0.8vmin) scale(1.03); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.25), 0 20px 60px rgba(0,0,0,0.6); }
+.g.on .icon { filter: none; }
+.mouse { grid-column: 1 / -1; margin: 0.2em 0 0; text-align: center; font-size: clamp(10px, 1.2vmin, 13px); color: var(--ink-faint); }
+.gestures.nohands .g { display: none; }
 
-.cambubble { position: fixed; z-index: 3; right: 2.2vmin; bottom: 2.2vmin; width: clamp(120px, 16vmin, 220px); aspect-ratio: 4 / 3;
-  padding: 6px; border-radius: 22px; }
-.cambubble video { width: 100%; height: 100%; object-fit: cover; border-radius: 16px; transform: scaleX(-1); display: block; opacity: 0.85; }
+.cambubble { position: fixed; z-index: 3; right: 2.4vmin; bottom: 2.4vmin; width: clamp(110px, 14vmin, 200px); aspect-ratio: 4 / 3;
+  padding: 5px; border-radius: 20px; }
+.cambubble video { width: 100%; height: 100%; object-fit: cover; border-radius: 15px; transform: scaleX(-1); display: block; opacity: 0.7; filter: grayscale(0.6); }
 
 .newpiece { position: fixed; inset: 0; z-index: 4; display: grid; place-items: center; align-content: center; gap: 2vmin;
   pointer-events: none; opacity: 0; transition: opacity 0.5s ease; }
-.newpiece canvas { width: 60vmin; height: 60vmin; transform: scale(0.6) rotate(-6deg); transition: transform 0.9s cubic-bezier(.2, 1.4, .4, 1); }
-.newpiece p { margin: 0; padding: 0.6em 1.3em; font-size: clamp(16px, 2.6vmin, 30px); font-weight: 600; }
+.newpiece canvas { width: 56vmin; height: 56vmin; transform: scale(0.6) rotate(-6deg); transition: transform 0.9s cubic-bezier(.2, 1.4, .4, 1); }
+.newpiece p { margin: 0; padding: 0.7em 1.5em; font-size: clamp(16px, 2.4vmin, 28px); font-weight: 600; }
 .newpiece.show { opacity: 1; }
 .newpiece.show canvas { transform: scale(1) rotate(0deg); }
 .newpiece.fly { opacity: 0; transition: opacity 0.7s ease; }
 .newpiece.fly canvas { transform: scale(0.25) translateY(10vmin); transition: transform 0.8s cubic-bezier(.6, 0, .8, .4); }
-.newpiece::before { content: ""; position: fixed; inset: 0; background: rgba(5, 6, 18, 0.45); z-index: -1; }
+.newpiece::before { content: ""; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.6); z-index: -1; }
 
-.offline { position: fixed; z-index: 6; left: 50%; bottom: 2.2vmin; transform: translateX(-50%); padding: 0.6em 1.2em; font-size: 14px; }
+.offline { position: fixed; z-index: 6; left: 50%; top: 2.4vmin; transform: translateX(-50%); padding: 0.6em 1.2em; font-size: 14px; }
 .debug { position: fixed; z-index: 6; left: 50%; top: 1vmin; transform: translateX(-50%); font: 12px ui-monospace, Menlo, monospace;
-  color: #cfe; background: rgba(0,0,0,0.5); padding: 4px 10px; border-radius: 8px; }
+  color: #cfe; background: rgba(0,0,0,0.6); padding: 4px 10px; border-radius: 8px; }
 [hidden] { display: none !important; }
