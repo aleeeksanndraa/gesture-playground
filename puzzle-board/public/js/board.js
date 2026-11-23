@@ -464,7 +464,7 @@ function setPhoneUrl(url) {
 // ---------- view: rotation, zoom, layout ----------
 const view = {
   layout: CONFIG.startLayout === 'sphere' ? 'sphere' : 'wall',
-  yaw: 0, pitch: 0, vyaw: 0, vpitch: 0, zoom: 1, pan: { x: 0, y: 0 }, dist: 10,
+  yaw: 0, pitch: 0, roll: 0, vyaw: 0, vpitch: 0, vroll: 0, zoom: 1, pan: { x: 0, y: 0 }, dist: 10,
   lastSwitch: performance.now(),
 };
 let lastInteract = -1e9;
@@ -493,7 +493,7 @@ function frame(nowMs) {
   const mixT = view.layout === 'sphere' ? 1 : 0;
   const mix = sharedUniforms.uMix.value += (mixT - sharedUniforms.uMix.value) * (1 - Math.exp(-dt * 2.2));
 
-  const idle = nowMs - lastInteract > CONFIG.idleSeconds * 1000;
+  const idle = CONFIG.idleSeconds > 0 && nowMs - lastInteract > CONFIG.idleSeconds * 1000;
   if (idle) {
     if (view.layout === 'sphere') { view.yaw += dt * 0.12; view.pitch += (Math.sin(time * 0.13) * 0.25 - view.pitch) * dt * 0.5; }
     else {
@@ -508,8 +508,10 @@ function frame(nowMs) {
     view.yaw += view.vyaw * dt; view.pitch += view.vpitch * dt;
     const damp = Math.exp(-dt * 2.2); view.vyaw *= damp; view.vpitch *= damp;
   }
+  // The finger swirl glides a moment after the finger stops, then the board stays put.
+  view.roll += view.vroll * dt; view.vroll *= Math.exp(-dt * 6);
   view.pitch = clamp(view.pitch, -1.25, 1.25);
-  world.rotation.set(view.pitch, view.yaw, 0);
+  world.rotation.set(view.pitch, view.yaw, view.roll);
 
   // Fit the camera to the puzzle (wall) or the sphere, then apply zoom and pan.
   const N = maxSlot + 1, half = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
@@ -572,19 +574,23 @@ addEventListener('keydown', e => {
   else if (k === 'd') { debug = !debug; $('#debug').hidden = !debug; }
   else if (k === 'c') $('#cambubble').hidden = !$('#cambubble').hidden;
   else if (k === 'h') $('#gestures').hidden = !$('#gestures').hidden;
-  else if (k === 'r') { view.yaw = view.pitch = view.vyaw = view.vpitch = 0; view.zoom = 1; view.pan = { x: 0, y: 0 }; }
+  else if (k === 'r') { view.yaw = view.pitch = view.vyaw = view.vpitch = view.roll = view.vroll = 0; view.zoom = 1; view.pan = { x: 0, y: 0 }; }
   else if (k === 'x') addDemoPieces(e.shiftKey ? 500 : 60);
 });
 
 // ---------- hand gestures ----------
 // ✋ open hand  → the puzzle unfolds into the curved wall; move your hand to tilt it.
-// ✊ fist       → the puzzle curls up into a sphere; move your fist to spin it, open to let go.
-// 🙌 two hands  → move them apart to zoom in, together to zoom out.
-// Dropping your hand (out of view) leaves everything as it is.
+// ✊ fist       → the puzzle curls up into a sphere; move your fist to turn it.
+// ☝️ finger     → draw circles in the air and the puzzle swirls round like a whirlpool.
+// 🙌 two hands  → stretch them apart (any direction, diagonal too) or push them towards the
+//                 camera to zoom in; bring them together or pull back to zoom out.
+// Nothing is moving on its own: drop your hands and the board stays exactly where you left it.
 let tracks = [], handStats = null, prev = new Map(), shape = { g: null, t: 0 }, active = null;
+let swirl = { id: null, pts: [] };   // recent fingertip points of the pointing hand
 const M = 0.1;   // ignore the outer 10% of the camera frame so people can reach the edges
 const toScreen = t => ({ x: clamp(((1 - t.x) - M) / (1 - 2 * M), 0, 1), y: clamp((t.y - M) / (1 - 2 * M), 0, 1) });
 const SHAPE_MS = 260;   // how long a hand shape must hold before the puzzle changes form
+const SWIRL_MS = 700;   // fingertip history used to find the centre of the circle
 
 async function initHands() {
   if (!CONFIG.gestures) { $('#gestures').hidden = true; return; }
@@ -598,43 +604,76 @@ async function initHands() {
   }
 }
 
+// Turning of the fingertip around the middle of its recent path, in radians (+ = clockwise
+// on screen). Straight strokes give ~0 because their points don't go round a centre.
+function swirlStep(t, p, now) {
+  if (swirl.id !== t.id) swirl = { id: t.id, pts: [] };
+  const pts = swirl.pts;
+  pts.push({ x: p.x * innerWidth / innerHeight, y: p.y, t: now });
+  while (pts.length && now - pts[0].t > SWIRL_MS) pts.shift();
+  if (pts.length < 6) return 0;
+  let cx = 0, cy = 0;
+  for (const q of pts) { cx += q.x; cy += q.y; }
+  cx /= pts.length; cy /= pts.length;
+  let r = 0;
+  for (const q of pts) r += Math.hypot(q.x - cx, q.y - cy);
+  r /= pts.length;
+  if (r < 0.025) return 0;                              // finger is still, no circle
+  const a = pts[pts.length - 2], b = pts[pts.length - 1];
+  const ra = Math.hypot(a.x - cx, a.y - cy), rb = Math.hypot(b.x - cx, b.y - cy);
+  if (ra < r * 0.5 || rb < r * 0.5) return 0;           // passing through the middle: a line, not a circle
+  const da = wrapAngle(Math.atan2(b.y - cy, b.x - cx) - Math.atan2(a.y - cy, a.x - cx));
+  return Math.abs(da) < 1 ? da : 0;
+}
+
 function onHands(tr, now, G) {
   onHands.G = G;
   tracks = tr.filter(t => !t.lost);
   if (tracks.length) touch();
-  const next = new Map(tracks.map(t => [t.id, { ...toScreen(t), t: now }]));
+  const next = new Map(tracks.map(t => [t.id, { ...toScreen(t), s: t.scale || 0, t: now }]));
   const isFist = t => t.gesture === G.FIST || t.gesture === G.PINCH || t.gesture === G.THUMBS;
   const isOpen = t => t.gesture === G.OPEN;
+  const isPoint = t => t.gesture === G.POINT;
   let mode = null;
 
   const two = tracks.slice(0, 2);
-  if (two.length === 2 && two.every(t => isFist(t) || isOpen(t))) {
+  if (two.length === 2 && !two.some(isPoint)) {
+    // Zoom with both hands in any shape: spread (in any direction) and depth both count.
     mode = 'zoom';
     const [a, b] = two.map(t => next.get(t.id)), [pa, pb] = two.map(t => prev.get(t.id));
     if (pa && pb) {
       const d = Math.hypot(a.x - b.x, a.y - b.y), pd = Math.hypot(pa.x - pb.x, pa.y - pb.y);
-      if (d > 0.03 && pd > 0.03) view.zoom = clamp(view.zoom * Math.pow(pd / d, 1.6), 0.15, 3);
+      let f = 1;
+      if (d > 0.03 && pd > 0.03) f *= pd / d;                       // apart = zoom in
+      const s = a.s + b.s, ps = pa.s + pb.s;
+      if (s > 0 && ps > 0 && Math.abs(ps / s - 1) > 0.012) f *= Math.pow(ps / s, 1.5);   // closer to the camera = zoom in (ignores jitter)
+      if (Math.abs(f - 1) > 0.004) view.zoom = clamp(view.zoom * Math.pow(f, 1.6), 0.15, 3);
     }
-    view.vyaw *= 0.8; view.vpitch *= 0.8;
+    view.vyaw = view.vpitch = 0;
     shape = { g: null, t: 0 };
   } else {
-    const t = tracks.find(isFist) || tracks.find(isOpen);
-    if (t) {
+    const t = tracks.find(isFist) || tracks.find(isOpen) || tracks.find(isPoint);
+    if (t && isPoint(t)) {
+      mode = 'swirl';
+      shape = { g: null, t: 0 };
+      const da = swirlStep(t, next.get(t.id), now);
+      // Clockwise finger = clockwise board. Smooth through a short glide velocity.
+      const p = prev.get(t.id), dts = p ? Math.max(0.016, (now - p.t) / 1000) : 0.033;
+      if (da) view.vroll = view.vroll * 0.6 + (-da * 0.7 / dts) * 0.4;
+    } else if (t) {
       const want = isFist(t) ? 'fist' : 'open';
       if (shape.g !== want) shape = { g: want, t: now };
       if (now - shape.t > SHAPE_MS) setLayout(want === 'fist' ? 'sphere' : 'wall');
       mode = want;
       const cur = next.get(t.id), p = prev.get(t.id);
       if (p) {
-        const dx = cur.x - p.x, dy = cur.y - p.y, dts = Math.max(0.01, (now - p.t) / 1000);
+        const dx = cur.x - p.x, dy = cur.y - p.y;
         const k = want === 'fist' ? 4.5 : 2.2;
         view.yaw += dx * k; view.pitch += dy * k * 0.75;
-        if (want === 'fist') {                       // a fist can throw the sphere
-          view.vyaw = view.vyaw * 0.5 + (dx * k / dts) * 0.5;
-          view.vpitch = view.vpitch * 0.5 + (dy * k * 0.75 / dts) * 0.5;
-        } else { view.vyaw *= 0.85; view.vpitch *= 0.85; }
       }
+      view.vyaw = view.vpitch = 0;                    // no throwing: it stops when you stop
     } else shape = { g: null, t: 0 };
+    if (!t || !isPoint(t)) swirl = { id: null, pts: [] };
   }
   prev = next;
   if (mode !== active) {
@@ -656,6 +695,13 @@ function drawHands(nowMs) {
     const [a, b] = pts, n = Math.max(6, Math.round(Math.hypot(b.x - a.x, b.y - a.y) / (14 * dpr)));
     hctx.fillStyle = 'rgba(255,255,255,0.55)';
     for (let i = 1; i < n; i++) { hctx.beginPath(); hctx.arc(a.x + (b.x - a.x) * i / n, a.y + (b.y - a.y) * i / n, 1.8 * dpr, 0, 7); hctx.fill(); }
+  }
+  if (active === 'swirl' && swirl.pts.length > 1) {
+    const sx = innerHeight / innerWidth;
+    swirl.pts.forEach((q, i) => {
+      hctx.beginPath(); hctx.arc(q.x * sx * W, q.y * H, (2 + 4 * i / swirl.pts.length) * dpr, 0, 7);
+      hctx.fillStyle = `rgba(63,240,200,${0.15 + 0.75 * i / swirl.pts.length})`; hctx.fill();
+    });
   }
   for (const { t, x, y } of pts) {
     const fist = t.gesture === G.FIST || t.gesture === G.PINCH || t.gesture === G.THUMBS;
@@ -714,4 +760,4 @@ requestAnimationFrame(frame);
 initHands();
 
 // For poking around in the browser console.
-window.board = { view, pages, sharedUniforms, get empties() { return empties; }, addDemoPieces, toggleLayout };
+window.board = { view, onHands, pages, sharedUniforms, get empties() { return empties; }, addDemoPieces, toggleLayout };

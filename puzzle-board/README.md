@@ -49,9 +49,10 @@ gesture you are making; the QR code sits on the right.
 | | What it does |
 | --- | --- |
 | ✋ open hand | the puzzle unfolds into the curved wall; move your hand to tilt it |
-| ✊ fist | the puzzle rolls up into a sphere; move your fist to spin it (it keeps spinning when you open) |
-| 🙌 two hands (open or fist) | move them apart to zoom in, together to zoom out |
-| drop your hand | everything stays as it is |
+| ✊ fist | the puzzle rolls up into a sphere; move your fist to turn it |
+| ☝️ finger circles | draw circles in the air with your index finger and the puzzle swirls round like a whirlpool |
+| 🙌 two hands | stretch them apart (diagonally works too) or push them towards the camera to zoom in; bring them together or pull back to zoom out |
+| drop your hand | everything stays exactly where you left it |
 | mouse drag / scroll | turn / zoom (shift-drag to slide) |
 | `L` or space | switch wall ↔ sphere |
 | `F` | fullscreen |
@@ -64,8 +65,9 @@ gesture you are making; the QR code sits on the right.
 A ring of small dots sits behind the puzzle (it becomes a shell of dots around the sphere). When a
 new piece arrives, the dots next to it light up in the piece's colour.
 
-When nobody is around for a while, the board drifts slowly by itself and switches between the
-wall and the sphere every 50 seconds, so it looks alive at an exhibition.
+The board never moves on its own: it stays where the last person left it. If you'd rather have it
+drift slowly by itself when nobody is around (and switch between wall and sphere every 50
+seconds), set `idleSeconds` in `public/js/config.js`, e.g. to 12.
 
 The question, the idle times and more are in `public/js/config.js`.
 

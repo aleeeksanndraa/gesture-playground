@@ -6,9 +6,9 @@ export const CONFIG = {
 
   // Start view: 'wall' (the puzzle) or 'sphere' (floating 3D gallery).
   startLayout: 'wall',
-  // With nobody touching or waving for this many seconds, the board slowly drifts by itself,
-  // and switches between wall and sphere every `autoSwitchSeconds` (0 = never switch).
-  idleSeconds: 12,
+  // 0 = the board stays exactly where people left it. Set e.g. 12 to let it drift slowly by
+  // itself after 12 s with nobody around, and switch wall/sphere every `autoSwitchSeconds`.
+  idleSeconds: 0,
   autoSwitchSeconds: 50,
 
   // Seconds a newly sent piece is shown big in the middle before it flies into the puzzle.
