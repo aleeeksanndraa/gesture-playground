@@ -12,12 +12,16 @@
   <canvas id="gl"></canvas>
   <canvas id="hands"></canvas>
 
-  <aside class="card blue qr-card">
+  <header class="title">
+    <p class="label">Piece of Home</p>
+    <h1 id="question"></h1>
+  </header>
+
+  <aside class="qr">
     <img id="qr" alt="QR code to add your piece" src="/api/qr.svg">
     <div>
-      <p class="label" id="hint"></p>
-      <h1 id="question"></h1>
-      <p class="url" id="url"></p>
+      <b id="hint"></b>
+      <span class="url" id="url"></span>
     </div>
   </aside>
 
@@ -37,7 +41,7 @@
     </div>
     <div class="card pink dim g" data-g="zoom">
       <div class="icon">🙌</div>
-      <div><b>Two hands</b><span>apart to zoom in · together to zoom out</span></div>
+      <div><b>Two hands</b><span>apart / together to zoom</span></div>
     </div>
     <p class="mouse">no camera? drag · scroll · L switch · F fullscreen</p>
   </nav>

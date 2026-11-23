@@ -3,20 +3,25 @@ body:active { cursor: grabbing; }
 #gl, #hands { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 1; display: block; }
 #hands { pointer-events: none; z-index: 5; }
 
-.qr-card { position: fixed; z-index: 3; left: 2.4vmin; top: 2.4vmin; display: flex; align-items: center; gap: 1.8vmin;
-  padding: 1.4vmin 2.6vmin 1.4vmin 1.4vmin; max-width: min(44vw, 620px); }
-.qr-card img { width: clamp(100px, 13vmin, 180px); aspect-ratio: 1; border-radius: 16px; background: #fff; padding: 7px; }
-.qr-card h1 { margin: 0.15em 0 0.2em; font-size: clamp(20px, 3vmin, 38px); line-height: 1.05; font-weight: 700; letter-spacing: -0.025em; }
-.qr-card .label { margin: 0; font-size: clamp(12px, 1.6vmin, 17px); }
-.url { margin: 0.4em 0 0; font-size: clamp(10px, 1.15vmin, 13px); color: var(--ink-faint); word-break: break-all; }
+/* Question: just type, top left. */
+.title { position: fixed; z-index: 3; left: 3vmin; top: 2.6vmin; max-width: 38vw; pointer-events: none; }
+.title .label { margin: 0 0 0.5em; font-size: clamp(11px, 1.4vmin, 15px); letter-spacing: 0.02em; }
+.title h1 { margin: 0; font-size: clamp(22px, 3.6vmin, 46px); line-height: 1.02; font-weight: 700; letter-spacing: -0.035em; }
 
-.counter { position: fixed; z-index: 3; right: 3vmin; top: 2.4vmin; text-align: right; }
+/* QR: small and quiet, bottom right. */
+.qr { position: fixed; z-index: 3; right: 3vmin; bottom: 2.6vmin; display: flex; align-items: center; gap: 1.2vmin; }
+.qr img { width: clamp(72px, 9vmin, 120px); aspect-ratio: 1; border-radius: 12px; background: #fff; padding: 5px; display: block; }
+.qr div { display: grid; gap: 0.3em; order: -1; text-align: right; max-width: 13em; }
+.qr b { font-size: clamp(12px, 1.5vmin, 16px); font-weight: 600; }
+.url { font-size: clamp(9px, 1.05vmin, 12px); color: var(--ink-faint); word-break: break-all; }
+
+.counter { position: fixed; z-index: 3; right: 3vmin; top: 2.6vmin; text-align: right; }
 .counter .big { font-size: clamp(44px, 8vmin, 110px); }
 .counter .label { font-size: clamp(12px, 1.6vmin, 17px); margin-top: 0.4em; }
 
 /* Gesture guide: the card of the gesture you're making lights up. */
 .gestures { position: fixed; z-index: 3; left: 50%; bottom: 2.4vmin; transform: translateX(-50%);
-  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1.2vmin; width: min(92vw, 980px); }
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1.2vmin; width: min(60vw, 900px); }
 .g { display: flex; align-items: center; gap: 1.2vmin; padding: 1.4vmin 1.8vmin; border-radius: 22px;
   transition: transform 0.35s cubic-bezier(.2, 1.4, .4, 1), box-shadow 0.35s; }
 .g .icon { font-size: clamp(24px, 3.6vmin, 44px); line-height: 1; filter: saturate(0.2) brightness(1.4); transition: filter 0.3s; }
@@ -27,7 +32,7 @@ body:active { cursor: grabbing; }
 .mouse { grid-column: 1 / -1; margin: 0.2em 0 0; text-align: center; font-size: clamp(10px, 1.2vmin, 13px); color: var(--ink-faint); }
 .gestures.nohands .g { display: none; }
 
-.cambubble { position: fixed; z-index: 3; right: 2.4vmin; bottom: 2.4vmin; width: clamp(110px, 14vmin, 200px); aspect-ratio: 4 / 3;
+.cambubble { position: fixed; z-index: 3; left: 3vmin; bottom: 2.6vmin; width: clamp(96px, 11vmin, 160px); aspect-ratio: 4 / 3;
   padding: 5px; border-radius: 20px; }
 .cambubble video { width: 100%; height: 100%; object-fit: cover; border-radius: 15px; transform: scaleX(-1); display: block; opacity: 0.7; filter: grayscale(0.6); }
 
