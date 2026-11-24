@@ -41,7 +41,7 @@ function startRing(id, color) {
 
 async function fetchSlot() {
   try { const r = await (await fetch('/api/next', { cache: 'no-store' })).json(); state.slot = r.slot; } catch {}
-  $('#already').textContent = state.slot ? `${state.slot} pieces already on the board` : 'Be the first piece on the board';
+  $('#already').textContent = state.slot ? `${state.slot} ${state.slot === 1 ? "piece" : "pieces"} already on the board` : 'Be the first piece on the board';
   state.edges = edgesForSlot(state.slot);
   const c = $('#introPiece'), ctx = c.getContext('2d');
   ctx.clearRect(0, 0, c.width, c.height);
