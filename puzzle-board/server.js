@@ -67,6 +67,7 @@ const MOUNTS = [
 function serveStatic(req, res, urlPath) {
   if (urlPath === '/' ) urlPath = '/board.html';
   if (urlPath === '/phone' || urlPath === '/phone/') urlPath = '/phone.html';
+  if (urlPath === '/house' || urlPath === '/house/') urlPath = '/house.html';
   for (const [prefix, dir] of MOUNTS) {
     if (!urlPath.startsWith(prefix)) continue;
     const file = path.join(dir, decodeURIComponent(urlPath.slice(prefix.length)));

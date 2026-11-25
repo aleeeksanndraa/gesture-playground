@@ -40,6 +40,23 @@ You can also set your own address for the QR code: `PUBLIC_URL=https://example.c
 Every piece is a JPEG in `data/pieces/`, listed in `data/pieces.json`. To start a fresh board,
 stop the server and delete the `data` folder. To keep an old board, rename the folder.
 
+## New: the house (stories)
+
+Open http://localhost:8080/house for the warm version: an abstract paper-lantern house whose walls,
+gables and roof are made of the pieces, glowing from inside, with embers drifting up like a fire.
+The house grows when it fills up.
+
+| | What it does |
+| --- | --- |
+| ✊ grab and move | turn the house (inside: look around) |
+| 🙌 two hands apart / together | step inside, where the photos float around you / step back out |
+| ☝️ point | a spot lights up under your finger; hold on a piece to open it big, point at an empty spot and the QR code lights up |
+| mouse | drag to turn, scroll or double-click to step in and out, click a piece to open it |
+| `I` or space | step in / out |
+| `X` / `Shift+X` | add 40 / 200 test pieces (only on screen) |
+
+Fonts: Fraunces (stand-in for Fields) and Inter, both in `public/type/` (SIL Open Font License).
+
 ## On the board
 
 The puzzle is not a flat sheet: it bulges towards you like part of a ball, and when you bring two open palms together it
