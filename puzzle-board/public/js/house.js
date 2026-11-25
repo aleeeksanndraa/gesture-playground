@@ -86,49 +86,109 @@ function radialTexture(stops, size = 256) {
 }
 const softTex = radialTexture([[0, 'rgba(255,255,255,1)'], [0.4, 'rgba(255,255,255,0.35)'], [1, 'rgba(255,255,255,0)']]);
 
-// ---------- the house: a hollow shell of glass cubes with a stepped gable roof and a door ----------
-const S = 0.5;                       // size of one cube
-const WX = 18, DZ = 14, HY = 8;      // footprint and wall height in cubes
-const voxels = [];
+// ---------- the house: an abstract, unfinished house of small translucent puzzle pieces ----------
+// The walls, gables and roof are a loose puzzle. Low down it is almost assembled; higher up pieces
+// come loose, tilt away and some drift around the house on their own, so it never quite closes.
+const P = 0.6;                                // one puzzle piece
+const W = 7.2, D = 5.4, HW = 3.6, R = 2.4;    // width (x), depth (z), wall height, roof rise
+const HOUSE_H = HW + R;
+const slots = [];
 {
-  const has = new Set(), add = (x, y, z, prio) => { const k = `${x},${y},${z}`; if (has.has(k)) return; has.add(k); voxels.push({ x, y, z, prio }); };
-  const door = (x, y, z) => z === DZ - 1 && (x === 8 || x === 9) && y < 5;
-  for (let y = 0; y < HY; y++) for (let x = 0; x < WX; x++) for (let z = 0; z < DZ; z++) {
-    if (!(x === 0 || x === WX - 1 || z === 0 || z === DZ - 1)) continue;
-    if (door(x, y, z)) continue;
-    const front = z === DZ - 1, back = z === 0;
-    const face = front ? 0 : (x === WX - 1 ? 1 : x === 0 ? 2 : 3);
-    const cx = front || back ? x - (WX - 1) / 2 : z - (DZ - 1) / 2;
-    add(x, y, z, face * 1000 + Math.hypot(cx, (y - HY * 0.45) * 1.2));
-  }
-  // roof: each layer steps in by one cube on the long sides; gable ends stay closed
-  for (let l = 0; ; l++) {
-    const x0 = l * 2, x1 = WX - 1 - l * 2, y = HY + l; if (x1 - x0 < 1) break;
-    for (let x = x0; x <= x1; x++) for (let z = 0; z < DZ; z++) {
-      const edge = x <= x0 + 1 || x >= x1 - 1, gable = z === 0 || z === DZ - 1;
-      if (!edge && !gable && x1 - x0 > 3) continue;
-      add(x, y, z, 4000 + l * 30 + Math.abs(z - (DZ - 1) / 2));
+  const v3 = (x, y, z) => new THREE.Vector3(x, y, z);
+  const add = (pos, normal, prio) => {
+    const up = Math.abs(normal.y) > 0.9 ? v3(0, 0, -1) : v3(0, 1, 0);
+    const n = normal.clone().normalize(), right = up.clone().cross(n).normalize(), u = n.clone().cross(right);
+    slots.push({ home: pos, n, q: new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(right, u, n)), prio });
+  };
+  const cols = Math.round(W / P), deep = Math.round(D / P), rows = Math.round(HW / P);
+  for (const side of [1, -1]) {                                   // front (door) and back, with gables
+    for (let c = 0; c < cols; c++) for (let r = 0; ; r++) {
+      const x = -W / 2 + P / 2 + c * P, y = P / 2 + r * P;
+      if (y > HOUSE_H) break;
+      if (y > HW && Math.abs(x) + P * 0.3 > (W / 2) * (1 - (y - HW) / R)) continue;
+      if (side === 1 && Math.abs(x) < P && y < 2.3) continue;     // the door
+      add(v3(x * side, y, side * D / 2), v3(0, 0, side), (side === 1 ? 0 : 3000) + Math.hypot(x, (y - 1.8) * 1.3) * 10);
     }
   }
-  voxels.sort((a, b) => a.prio - b.prio);
+  for (const side of [1, -1]) for (let c = 0; c < deep; c++) for (let r = 0; r < rows; r++) {   // side walls
+    const z = -D / 2 + P / 2 + c * P, y = P / 2 + r * P;
+    add(v3(side * W / 2, y, z), v3(side, 0, 0), 1000 + (side === 1 ? 0 : 1000) + Math.hypot(z, y - 1.8) * 10);
+  }
+  const L = Math.hypot(W / 2, R), along = Math.round(L / P);
+  for (const side of [1, -1]) {                                   // roof slopes
+    const s = v3(-side * W / 2, R, 0).normalize(), n = v3(side * R, W / 2, 0).normalize();
+    for (let c = 0; c < deep; c++) for (let r = 0; r < along; r++) {
+      const u = P / 2 + r * P, z = -D / 2 + P / 2 + c * P;
+      add(v3(side * W / 2, HW, z).addScaledVector(s, u).addScaledVector(n, 0.03), n, 4000 + r * 40 + Math.abs(z) * 10);
+    }
+  }
+  // how loose each piece is: mostly by height, with noise, so the edge of the puzzle is ragged
+  slots.forEach((s, i) => {
+    const h = s.home.y / HOUSE_H, k = hash(i * 3.1 + 7);
+    s.loose = clamp((h - 0.5) * 1.5 + (k - 0.5) * 0.7 + (hash(i * 1.7) < 0.05 ? 0.6 : 0), 0, 1);
+    s.seed = hash(i * 1.37);
+  });
+  // the loosest pieces leave the house completely (a few vanish, leaving gaps)
+  for (let i = slots.length - 1; i >= 0; i--) if (slots[i].loose > 0.93 && hash(i * 9.1) < 0.45) slots.splice(i, 1);
+  for (const [i, s] of slots.entries()) {
+    const j = new THREE.Euler((hash(i * 2.2) - 0.5) * 0.12, (hash(i * 4.4) - 0.5) * 0.12, (hash(i * 6.6) - 0.5) * 0.16);
+    let pos = s.home.clone().addScaledVector(s.n, (hash(i * 8.8) - 0.5) * 0.06), q = s.q.clone().multiply(new THREE.Quaternion().setFromEuler(j));
+    if (s.loose > 0.78) {                                         // floating free around the house
+      const out = 0.5 + hash(i * 5.5) * 2.0;
+      pos.addScaledVector(s.n, out).add(new THREE.Vector3((hash(i * 7.3) - 0.5) * 1.6, -0.4 + hash(i * 3.9) * 1.2, (hash(i * 2.9) - 0.5) * 1.6));
+      q.multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler((hash(i * 1.1) - 0.5) * 2.2, (hash(i * 1.9) - 0.5) * 2.2, (hash(i * 2.3) - 0.5) * 2.2)));
+    } else if (s.loose > 0.32) {                                  // coming loose: pulled out a little and tilted
+      const k = (s.loose - 0.32) / 0.4;
+      pos.addScaledVector(s.n, k * k * 0.6).y += k * 0.15;
+      q.multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler((hash(i * 1.1) - 0.5) * k * 0.9, (hash(i * 1.9) - 0.5) * k * 0.9, (hash(i * 2.3) - 0.5) * k * 0.6)));
+    }
+    s.pos = pos; s.rot = q; s.prio += s.loose * 900;
+  }
+  slots.sort((a, b) => a.prio - b.prio);
 }
-const N = voxels.length;
-const HOUSE_H = (HY + WX / 4) * S;
-const boxGeo = new THREE.BoxGeometry(S * 0.97, S * 0.97, S * 0.97);
-const inst = new THREE.InstancedBufferGeometry().copy(boxGeo);
-inst.instanceCount = N;
-const aCell = new Float32Array(N).fill(-1), aBirth = new Float32Array(N).fill(-100), aSeed = new Float32Array(N);
-const aOff = new Float32Array(N * 3);
-voxels.forEach((v, i) => {
-  aOff[i * 3] = (v.x - (WX - 1) / 2) * S; aOff[i * 3 + 1] = (v.y + 0.5) * S; aOff[i * 3 + 2] = (v.z - (DZ - 1) / 2) * S;
-  aSeed[i] = hash(i * 1.37); v.pos = new THREE.Vector3(aOff[i * 3], aOff[i * 3 + 1], aOff[i * 3 + 2]);
-});
-inst.setAttribute('aOff', new THREE.InstancedBufferAttribute(aOff, 3));
-inst.setAttribute('aCell', new THREE.InstancedBufferAttribute(aCell, 1));
-inst.setAttribute('aBirth', new THREE.InstancedBufferAttribute(aBirth, 1));
-inst.setAttribute('aSeed', new THREE.InstancedBufferAttribute(aSeed, 1));
+const N = slots.length;
 
-// Photo atlas: each piece is blurred light inside its cube (the glass is frosted).
+// One puzzle-piece shape: tabs out on the right and top, holes on the left and bottom, so
+// neighbours fit together.
+function puzzleGeometry(size, depth) {
+  const sh = new THREE.Shape(), h = size / 2, t = size * 0.17;
+  const pts = [];
+  const edge = (ax, ay, bx, by, dir) => {
+    const dx = bx - ax, dy = by - ay, len = Math.hypot(dx, dy), nx = (dy / len) * dir, ny = (-dx / len) * dir;
+    const at = (f, o) => new THREE.Vector2(ax + dx * f + nx * o, ay + dy * f + ny * o);
+    pts.push(at(0, 0), at(0.36, 0));
+    const b1 = new THREE.CubicBezierCurve(at(0.36, 0), at(0.44, t * 0.25), at(0.28, t), at(0.5, t));
+    const b2 = new THREE.CubicBezierCurve(at(0.5, t), at(0.72, t), at(0.56, t * 0.25), at(0.64, 0));
+    pts.push(...b1.getPoints(8).slice(1), ...b2.getPoints(8).slice(1), at(1, 0));
+  };
+  // with a counter-clockwise outline, dir -1 pushes the bump outwards and +1 pulls it in
+  edge(-h, -h, h, -h, 1);     // bottom: hole
+  edge(h, -h, h, h, -1);      // right: tab
+  edge(h, h, -h, h, -1);      // top: tab
+  edge(-h, h, -h, -h, 1);     // left: hole
+  const clean = pts.filter((p, i) => i === 0 || p.distanceTo(pts[i - 1]) > 1e-5);
+  clean.pop();
+  sh.setFromPoints(clean);
+  const g = new THREE.ExtrudeGeometry(sh, { depth, bevelEnabled: true, bevelThickness: depth * 0.5, bevelSize: size * 0.025, bevelSegments: 2, curveSegments: 6 });
+  g.translate(0, 0, -depth / 2);
+  g.computeVertexNormals();
+  g.userData.outline = clean;
+  return g;
+}
+const pieceGeo = puzzleGeometry(P * 0.9, 0.035);
+function makeInstanced(base, n) {
+  const g = new THREE.InstancedBufferGeometry().copy(base);
+  const at = (name, size) => { const a = new Float32Array(n * size); g.setAttribute(name, new THREE.InstancedBufferAttribute(a, size)); return a; };
+  return { g, off: at('aOff', 3), quat: at('aQuat', 4), cell: at('aCell', 1).fill(-1), birth: at('aBirth', 1).fill(-100), seed: at('aSeed', 1), loose: at('aLoose', 1) };
+}
+const H = makeInstanced(pieceGeo, N);
+H.g.instanceCount = N;
+slots.forEach((s, i) => {
+  s.pos.toArray(H.off, i * 3); H.quat.set([s.rot.x, s.rot.y, s.rot.z, s.rot.w], i * 4);
+  H.seed[i] = s.seed; H.loose[i] = s.loose;
+});
+
+// Photo atlas: each piece shows its photo as soft light (the glass is frosted).
 const ATLAS = 2048, CELL = 64, PER = ATLAS / CELL;
 const atlasCanvas = document.createElement('canvas'); atlasCanvas.width = atlasCanvas.height = ATLAS;
 const actx = atlasCanvas.getContext('2d'); actx.fillStyle = '#000'; actx.fillRect(0, 0, ATLAS, ATLAS);
@@ -142,98 +202,118 @@ const cardTex = new THREE.CanvasTexture(cardCanvas);
 cardTex.colorSpace = THREE.SRGBColorSpace; cardTex.minFilter = THREE.LinearMipmapLinearFilter; cardTex.anisotropy = 4;
 
 const uniforms = {
-  uTime: { value: 0 }, uTurn: { value: 0 }, uAtlas: { value: atlasTex }, uPer: { value: PER },
-  uLight: { value: new THREE.Vector3(0, HOUSE_H * 0.45, 0) }, uMirror: { value: 0 }, uInside: { value: 0 }, uHover: { value: -1 },
+  uTime: { value: 0 }, uTurn: { value: 0 }, uAtlas: { value: atlasTex }, uPer: { value: PER }, uSize: { value: P * 0.9 },
+  uLight: { value: new THREE.Vector3(0, 1.6, 0) }, uMirror: { value: 0 }, uInside: { value: 0 }, uHover: { value: -1 },
+  uBlur: { value: 1.6 }, uPhoto: { value: 0.55 }, uSolid: { value: 0 }, uFade: { value: 1 }, uLift: { value: 0.6 },
 };
 const glassVert = `
-attribute vec3 aOff; attribute float aCell, aBirth, aSeed;
-uniform float uMirror;
-varying vec3 vW, vN, vL; varying vec2 vUv; varying float vCell, vBirth, vSeed, vId;
+attribute vec3 aOff; attribute vec4 aQuat; attribute float aCell, aBirth, aSeed, aLoose;
+uniform float uMirror, uTime, uSize, uLift;
+varying vec3 vW, vN; varying vec2 vUv; varying float vCell, vBirth, vSeed, vId, vEdge, vLoose;
+vec3 rot(vec4 q, vec3 v){ return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v); }
 void main(){
-  vec3 p = position + aOff;
+  // loose pieces breathe and drift a little
+  float k = aLoose * aLoose;
+  vec3 bob = vec3(sin(uTime * 0.5 + aSeed * 40.0), sin(uTime * 0.7 + aSeed * 23.0), cos(uTime * 0.45 + aSeed * 31.0)) * (0.015 + k * 0.16);
+  float sp = (uTime * 0.25 + aSeed * 6.0) * k * step(0.78, aLoose);
+  vec3 lp = position;
+  lp.xz = mat2(cos(sp), -sin(sp), sin(sp), cos(sp)) * lp.xz;
+  // the house keeps gathering itself: every piece now and then drifts out a little and comes back
+  float br = pow(0.5 + 0.5 * sin(uTime * 0.21 + aSeed * 37.0), 6.0) * (0.25 + aLoose * 0.9);
+  vec3 outDir = normalize(aOff - vec3(0.0, 2.2, 0.0) + 1e-3);
+  vec3 p = rot(aQuat, lp) + aOff + bob + outDir * br * 0.9;
+  p.y += uLift;
   if (uMirror > 0.5) p.y = -p.y;
   vec4 w = modelMatrix * vec4(p, 1.0);
-  vW = w.xyz; vN = normalize(mat3(modelMatrix) * (normal * vec3(1.0, uMirror > 0.5 ? -1.0 : 1.0, 1.0)));
-  vL = position / ${(S * 0.97).toFixed(3)}; vUv = uv; vCell = aCell; vBirth = aBirth; vSeed = aSeed; vId = float(gl_InstanceID);
+  vec3 n = rot(aQuat, normal);
+  if (uMirror > 0.5) n.y = -n.y;
+  vW = w.xyz; vN = normalize(mat3(modelMatrix) * n);
+  vEdge = 1.0 - abs(normal.z);
+  vUv = position.xy / uSize + 0.5; vCell = aCell; vBirth = aBirth; vSeed = aSeed; vId = float(gl_InstanceID); vLoose = aLoose;
   gl_Position = projectionMatrix * viewMatrix * w;
 }`;
 const glassFrag = `
-uniform float uTime, uTurn, uPer, uMirror, uInside, uHover; uniform vec3 uLight; uniform sampler2D uAtlas;
-varying vec3 vW, vN, vL; varying vec2 vUv; varying float vCell, vBirth, vSeed, vId;
-// the reference palette: coral, rose, hot pink, violet, periwinkle blue, back to amber
+uniform float uTime, uTurn, uPer, uMirror, uInside, uHover, uBlur, uPhoto, uFade, uSolid; uniform vec3 uLight; uniform sampler2D uAtlas;
+varying vec3 vW, vN; varying vec2 vUv; varying float vCell, vBirth, vSeed, vId, vEdge, vLoose;
+// warm iridescence: amber, peach, rose, lilac, a breath of sky blue
 vec3 pal(float h){
-  h = fract(h) * 6.0;
-  vec3 c0 = vec3(1.00, 0.42, 0.22), c1 = vec3(1.00, 0.22, 0.30), c2 = vec3(1.00, 0.30, 0.62),
-       c3 = vec3(0.68, 0.32, 1.00), c4 = vec3(0.42, 0.50, 1.00), c5 = vec3(1.00, 0.62, 0.30);
+  h = fract(h) * 5.0;
+  vec3 c0 = vec3(1.00, 0.48, 0.12), c1 = vec3(1.00, 0.18, 0.22), c2 = vec3(1.00, 0.20, 0.58),
+       c3 = vec3(0.62, 0.25, 1.00), c4 = vec3(0.30, 0.45, 1.00);
   float f = fract(h); f = f * f * (3.0 - 2.0 * f);
   if (h < 1.0) return mix(c0, c1, f); if (h < 2.0) return mix(c1, c2, f); if (h < 3.0) return mix(c2, c3, f);
-  if (h < 4.0) return mix(c3, c4, f); if (h < 5.0) return mix(c4, c5, f); return mix(c5, c0, f);
+  if (h < 4.0) return mix(c3, c4, f); return mix(c4, c0, f);
 }
 void main(){
   vec3 N = normalize(vN), V = normalize(cameraPosition - vW);
-  float ndv = abs(dot(N, V)), fres = pow(1.0 - ndv, 3.0);
-  // big soft patches of colour over the whole house; they slide as the house turns
-  vec3 q = vW * 0.32;
-  float field = sin(q.x * 1.3 + uTurn * 2.2 + uTime * 0.05) + sin(q.y * 1.7 - q.z * 0.9 + uTurn * 1.4)
-              + sin((q.x + q.z) * 0.9 - uTime * 0.04) * 0.8;
-  float h = field * 0.22 + ndv * 0.22 + vSeed * 0.05 + uTurn * 0.25;
-  vec3 col = pal(h);
-  // glow from a lamp low in the middle of the house
-  float d = length(vW - uLight);
-  float lamp = 0.45 + 0.75 * exp(-d * 0.22);
+  float ndv = abs(dot(N, V)), fres = pow(1.0 - ndv, 2.5);
+  vec3 q = vW * 0.3;
+  float field = sin(q.x * 1.3 + uTurn * 2.2 + uTime * 0.06) + sin(q.y * 1.6 - q.z * 0.9 + uTurn * 1.4) + sin((q.x + q.z) * 0.9 - uTime * 0.05) * 0.8;
+  float h = field * 0.2 + ndv * 0.35 + vSeed * 0.08 + uTurn * 0.25;
+  vec3 iri = pal(h);
+  float lamp = 0.6 + 0.45 * exp(-length(vW - uLight) * 0.3);        // the warm lamp inside the house
   float has = step(0.0, vCell);
+  vec3 col = iri * 0.75;
+  float alpha = 0.11;
   if (has > 0.5) {
     vec2 cell = vec2(mod(vCell, uPer), uPer - 1.0 - floor(vCell / uPer));
-    vec3 photo = texture2D(uAtlas, (cell + clamp(vUv, 0.08, 0.92)) / uPer, 2.2).rgb;
-    float lum = dot(photo, vec3(0.3, 0.55, 0.15));
-    vec3 tint = photo / max(lum, 0.08);
-    col = mix(col, col * (0.5 + lum) * mix(vec3(1.0), clamp(tint, 0.0, 2.0), 0.45), 0.85);   // the photo glows through frosted glass
-  } else col *= 0.62;
-  // frosted cube: brighter in the middle of each face, a fine light seam on the edges
-  vec3 a = abs(vL) * 2.0;
-  float e1 = max(a.x, max(a.y, a.z)), e2 = a.x + a.y + a.z - e1 - min(a.x, min(a.y, a.z));
-  float seam = smoothstep(0.9, 0.99, e2);
-  float inner = 1.0 - 0.18 * smoothstep(0.3, 0.95, e2);
-  float shimmer = 0.9 + 0.1 * sin(uTime * 1.1 + vSeed * 20.0 + dot(vW, vec3(1.3, 0.7, 1.1)));
-  col *= lamp * inner * shimmer * (0.72 + vSeed * 0.4) * 0.78;
-  col += pal(h + 0.33) * fres * 0.45;                 // the iridescent rim: another colour at grazing angles
-  col = mix(col, col * 0.55 + pal(h + 0.15) * 0.25 * lamp, seam);
+    vec3 photo = texture2D(uAtlas, (cell + clamp(vUv, 0.04, 0.96)) / uPer, uBlur).rgb;
+    col = mix(iri * 0.7, photo * 1.1 * mix(vec3(1.0), iri, 0.35), uPhoto);
+    alpha = mix(0.34, 0.88, uSolid);
+  }
+  float shimmer = 0.88 + 0.12 * sin(uTime * 1.3 + vSeed * 20.0 + dot(vW, vec3(1.3, 0.7, 1.1)));
+  col *= lamp * shimmer;
+  // bright glassy rims where the light catches the edges and the bevel
+  vec3 rim = pal(h + 0.3) * (fres * 0.25 + vEdge * 0.35) * lamp;
+  col += rim; alpha = max(alpha, vEdge * 0.3 + fres * 0.15);
   float age = uTime - vBirth;
-  col += vec3(1.0, 0.75, 0.65) * has * step(0.0, age) * exp(-max(age, 0.0) * 1.4) * 2.0;
-  if (abs(vId - uHover) < 0.5) col = col * 1.6 + 0.12;
-  float alpha = 0.86;
-  if (uMirror > 0.5) { col *= 0.55 * exp(vW.y * 0.6); alpha = 1.0; }
-  gl_FragColor = vec4(col, alpha);
+  col += vec3(1.0, 0.85, 0.7) * has * step(0.0, age) * exp(-max(age, 0.0) * 1.4) * 2.5;
+  if (abs(vId - uHover) < 0.5) { col = col * 1.5 + vec3(0.25, 0.2, 0.18); alpha = max(alpha, 0.75); }
+  if (uMirror > 0.5) { col *= 0.38 * exp(vW.y * 0.7); }
+  alpha *= uFade;
+  gl_FragColor = vec4(col * alpha, alpha);    // premultiplied, with a little extra glow
 }`;
 const glassMat = new THREE.ShaderMaterial({ vertexShader: glassVert, fragmentShader: glassFrag, uniforms,
-  transparent: true, depthWrite: true, side: THREE.FrontSide });
-const house = new THREE.Mesh(inst, glassMat); house.frustumCulled = false; house.renderOrder = 3; world.add(house);
-const mirrorMat = glassMat.clone(); mirrorMat.uniforms = { ...uniforms, uMirror: { value: 1 } }; mirrorMat.side = THREE.BackSide;
-const mirror = new THREE.Mesh(inst, mirrorMat); mirror.frustumCulled = false; mirror.renderOrder = 1; world.add(mirror);
+  transparent: true, depthWrite: false, side: THREE.DoubleSide,
+  blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor });
+const house = new THREE.Mesh(H.g, glassMat); house.frustumCulled = false; house.renderOrder = 3; world.add(house);
+const mirrorMat = glassMat.clone(); mirrorMat.uniforms = { ...uniforms, uMirror: { value: 1 } };
+const mirror = new THREE.Mesh(H.g, mirrorMat); mirror.frustumCulled = false; mirror.renderOrder = 1; world.add(mirror);
 
-// Floor: dark, slightly glossy, lit by the house. Coloured rays spill out across it.
+// The room: warm haze, not black. A soft glow behind the house, a glossy floor that fades into it.
+{
+  const c = document.createElement('canvas'); c.width = 4; c.height = 256;
+  const x = c.getContext('2d'), g = x.createLinearGradient(0, 0, 0, 256);
+  g.addColorStop(0, '#2a1620'); g.addColorStop(0.45, '#5a2f38'); g.addColorStop(0.62, '#7a4544'); g.addColorStop(1, '#2a161c');
+  x.fillStyle = g; x.fillRect(0, 0, 4, 256);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; scene.background = t;
+}
 const floorMat = new THREE.ShaderMaterial({ transparent: true, depthWrite: false, uniforms: { uTime: uniforms.uTime, uTurn: uniforms.uTurn, uInside: uniforms.uInside },
   vertexShader: `varying vec3 vW; void main(){ vec4 w = modelMatrix*vec4(position,1.0); vW = w.xyz; gl_Position = projectionMatrix*viewMatrix*w; }`,
   fragmentShader: `uniform float uTime, uTurn, uInside; varying vec3 vW;
   void main(){
     float r = length(vW.xz), a = atan(vW.z, vW.x);
-    float rays = pow(0.5 + 0.5*sin(a*13.0 + sin(a*5.0)*1.5 + uTurn*0.6), 6.0) * 0.8 + pow(0.5 + 0.5*sin(a*7.0 - 1.3), 10.0);
-    float fall = exp(-max(r - 3.0, 0.0) * 0.32);
-    vec3 c1 = vec3(1.0, 0.3, 0.35), c2 = vec3(0.55, 0.4, 1.0), c3 = vec3(1.0, 0.55, 0.3);
-    vec3 tint = mix(mix(c1, c2, 0.5 + 0.5*sin(a*2.0 + uTurn)), c3, 0.5 + 0.5*sin(a*3.0 - 0.7));
-    vec3 col = tint * (rays * fall * 0.55 + exp(-r * 0.35) * 0.35) * (1.0 - uInside * 0.75);
-    float dim = smoothstep(26.0, 6.0, r);
-    gl_FragColor = vec4(col * dim + vec3(0.025, 0.014, 0.02), 0.62);
+    float rays = pow(0.5 + 0.5*sin(a*11.0 + sin(a*5.0)*1.5 + uTurn*0.6 + uTime*0.05), 5.0) * 0.7 + pow(0.5 + 0.5*sin(a*6.0 - 1.3 - uTime*0.04), 9.0) * 0.8;
+    float fall = exp(-max(r - 2.5, 0.0) * 0.28);
+    vec3 c1 = vec3(1.0, 0.6, 0.35), c2 = vec3(1.0, 0.45, 0.6), c3 = vec3(0.7, 0.6, 1.0);
+    vec3 tint = mix(mix(c1, c2, 0.5 + 0.5*sin(a*2.0 + uTurn)), c3, 0.35 + 0.35*sin(a*3.0 - 0.7));
+    vec3 col = tint * tint * (rays * fall * 0.38 + exp(-r * 0.3) * 0.45) * (1.0 - uInside * 0.6);
+    float fade = smoothstep(22.0, 7.0, r);
+    vec3 base = vec3(0.16, 0.09, 0.1);
+    gl_FragColor = vec4(base * fade + col * fade, 0.78 * fade);
   }` });
 const floor = new THREE.Mesh(new THREE.PlaneGeometry(80, 80), floorMat);
 floor.rotation.x = -Math.PI / 2; floor.renderOrder = 2; world.add(floor);
-// the back wall of the room catches a soft glow
-const wallGlow = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: softTex, color: new THREE.Color(0.22, 0.08, 0.12),
-  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
-wallGlow.scale.set(40, 22, 1); wallGlow.position.set(0, 4, -14); world.add(wallGlow);
+const glow = (color, sx, sy, pos, order) => {
+  const m = new THREE.Sprite(new THREE.SpriteMaterial({ map: softTex, color, transparent: true, depthWrite: false, depthTest: false, blending: THREE.AdditiveBlending }));
+  m.scale.set(sx, sy, 1); m.position.copy(pos); m.renderOrder = order; world.add(m); return m;
+};
+const haloBack = glow(new THREE.Color(0.22, 0.11, 0.09), 22, 16, new THREE.Vector3(0, 3, 0), 0);   // light around the house
+const lampGlow = glow(new THREE.Color(0.32, 0.14, 0.06), 6, 6, new THREE.Vector3(0, 1.6, 0), 4);   // the cozy lamp inside
+const roofGlow = glow(new THREE.Color(0.14, 0.05, 0.12), 9, 6, new THREE.Vector3(0, 5, 0), 4);
 
 // Floating dust of light, slow and few.
-const DUST = 260, dPos = new Float32Array(DUST * 3), dSeed = new Float32Array(DUST);
+const DUST = 320, dPos = new Float32Array(DUST * 3), dSeed = new Float32Array(DUST);
 for (let i = 0; i < DUST; i++) { dPos[i * 3] = (Math.random() - 0.5) * 18; dPos[i * 3 + 1] = Math.random() * 10; dPos[i * 3 + 2] = (Math.random() - 0.5) * 16; dSeed[i] = Math.random(); }
 const dustGeo = new THREE.BufferGeometry(); dustGeo.setAttribute('position', new THREE.BufferAttribute(dPos, 3)); dustGeo.setAttribute('aSeed', new THREE.BufferAttribute(dSeed, 1));
 const dustMat = new THREE.ShaderMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, uniforms: { uTime: uniforms.uTime, uScale: { value: 1 } },
@@ -241,39 +321,20 @@ const dustMat = new THREE.ShaderMaterial({ transparent: true, depthWrite: false,
     void main(){ vec3 p = position; p.y = mod(p.y + uTime * (0.08 + aSeed * 0.12), 10.0); p.x += sin(uTime*0.3 + aSeed*30.0)*0.4;
       vec4 mv = modelViewMatrix*vec4(p,1.0); gl_Position = projectionMatrix*mv; vS = aSeed;
       vA = (0.3 + 0.7*sin(uTime*1.5 + aSeed*40.0)*0.5+0.35) * smoothstep(0.0, 1.5, p.y) * smoothstep(10.0, 7.0, p.y);
-      gl_PointSize = (4.0 + aSeed * 10.0) * uScale / -mv.z; }`,
+      gl_PointSize = (4.0 + aSeed * 8.0) * uScale / -mv.z; }`,
   fragmentShader: `varying float vA, vS; void main(){ float r = length(gl_PointCoord-0.5); if (r > 0.5) discard;
-    vec3 c = mix(vec3(1.0,0.55,0.6), vec3(0.7,0.6,1.0), vS); gl_FragColor = vec4(c * smoothstep(0.5,0.0,r) * vA * 0.6, 1.0); }` });
-const dust = new THREE.Points(dustGeo, dustMat); dust.frustumCulled = false; dust.renderOrder = 4; world.add(dust);
+    vec3 c = mix(vec3(1.0,0.75,0.5), vec3(1.0,0.6,0.8), vS); gl_FragColor = vec4(c * smoothstep(0.5,0.0,r) * vA * 0.55, 1.0); }` });
+const dust = new THREE.Points(dustGeo, dustMat); dust.frustumCulled = false; dust.renderOrder = 6; world.add(dust);
 
-// Floating panes inside: thin glass cards, one per piece, visible when you step in.
-const MAXF = 32, CARD = 1.15;
-const cardGeo = new THREE.InstancedBufferGeometry().copy(new THREE.BoxGeometry(CARD, CARD, 0.05));
-const fOff = new Float32Array(MAXF * 3), fCell = new Float32Array(MAXF).fill(-1), fBirth = new Float32Array(MAXF).fill(-100), fSeed = new Float32Array(MAXF);
-for (let i = 0; i < MAXF; i++) fSeed[i] = hash(i * 7.7);
-cardGeo.setAttribute('aOff', new THREE.InstancedBufferAttribute(fOff, 3));
-cardGeo.setAttribute('aCell', new THREE.InstancedBufferAttribute(fCell, 1));
-cardGeo.setAttribute('aBirth', new THREE.InstancedBufferAttribute(fBirth, 1));
-cardGeo.setAttribute('aSeed', new THREE.InstancedBufferAttribute(fSeed, 1));
-cardGeo.instanceCount = 0;
-// cards face the camera: rotate the box per instance in the vertex shader
+// Inside: the newest pieces float around you as bigger glowing puzzle pieces with clear photos.
+const MAXF = 28, CARD = 0.72;
+const F = makeInstanced(puzzleGeometry(CARD, 0.03), MAXF);
+F.g.instanceCount = 0;
+for (let i = 0; i < MAXF; i++) F.seed[i] = hash(i * 7.7);
 const cardMat = glassMat.clone();
-cardMat.uniforms = { ...uniforms, uAtlas: { value: cardTex }, uPer: { value: PER2 }, uMirror: { value: 0 }, uHover: { value: -1 }, uCam: { value: new THREE.Vector3() }, uFade: { value: 0 } };
-cardMat.vertexShader = glassVert.replace('vec3 p = position + aOff;', `
-  vec3 f = normalize(vec3(uCam.x - aOff.x, 0.0, uCam.z - aOff.z) + 1e-4);
-  vec3 r = normalize(cross(vec3(0.0,1.0,0.0), f));
-  vec3 p = aOff + r * position.x + vec3(0.0,1.0,0.0) * position.y + f * position.z;`)
-  .replace('uniform float uMirror;', 'uniform float uMirror; uniform vec3 uCam;')
-  .replace(`vL = position / ${(S * 0.97).toFixed(3)};`, `vL = position / vec3(${CARD.toFixed(3)}, ${CARD.toFixed(3)}, 0.05);`)
-  .replace('vN = normalize(mat3(modelMatrix) * (normal * vec3(1.0, uMirror > 0.5 ? -1.0 : 1.0, 1.0)));',
-    'vN = normalize(mat3(modelMatrix) * (r * normal.x + vec3(0.0,1.0,0.0) * normal.y + f * normal.z));');
-cardMat.fragmentShader = glassFrag.replace('uniform float uTime,', 'uniform float uFade; uniform float uTime,')
-  .replace('col = mix(col, col * (0.5 + lum)', 'col = mix(col * 0.5, photo * 1.1, 0.8); col = mix(col, col * (0.5 + lum)').replace('0.45), 0.85);', '0.45), 0.0);')
-  .replace(', 2.2).rgb', ', 0.4).rgb')
-  .replace('col += pal(h + 0.33) * fres * 0.45;', 'col += pal(h + 0.33) * (fres * 1.2 + seam * 0.6);')
-  .replace('gl_FragColor = vec4(col, alpha);', 'gl_FragColor = vec4(col * 0.95, (0.8 + seam * 0.2) * uFade);');
-cardMat.depthWrite = false;
-const cards = new THREE.Mesh(cardGeo, cardMat); cards.frustumCulled = false; cards.renderOrder = 5; world.add(cards);
+cardMat.uniforms = { ...uniforms, uAtlas: { value: cardTex }, uPer: { value: PER2 }, uSize: { value: CARD }, uBlur: { value: 0.3 },
+  uPhoto: { value: 0.9 }, uSolid: { value: 1 }, uHover: { value: -1 }, uFade: { value: 0 } };
+const cards = new THREE.Mesh(F.g, cardMat); cards.frustumCulled = false; cards.renderOrder = 5; world.add(cards);
 
 // ---------- pieces ----------
 const pieces = new Map();   // slot -> { id, slot, t, demo, img }
@@ -297,15 +358,15 @@ function addPiece(info, img, born) {
   const cell = drawToAtlas(info.slot, img);
   pieces.set(info.slot, { ...info, img, cell });
   const v = voxelOf(info.slot);
-  aCell[v] = cell; aBirth[v] = born;
-  inst.attributes.aCell.needsUpdate = true; inst.attributes.aBirth.needsUpdate = true;
+  H.cell[v] = cell; H.birth[v] = born;
+  H.g.attributes.aCell.needsUpdate = true; H.g.attributes.aBirth.needsUpdate = true;
   // the newest pieces float inside; the oldest card makes room
   const k = cardNext++ % MAXF;
   if (cardOwner[k] != null) delete pieces.get(cardOwner[k]).card;
   cardOwner[k] = info.slot;
   drawCell(cctx, k, PER2, CELL2, img); cardTex.needsUpdate = true;
-  fCell[k] = k; fBirth[k] = born; cardGeo.instanceCount = Math.max(cardGeo.instanceCount, k + 1);
-  cardGeo.attributes.aCell.needsUpdate = true; cardGeo.attributes.aBirth.needsUpdate = true;
+  F.cell[k] = k; F.birth[k] = born; F.g.instanceCount = Math.max(F.g.instanceCount, k + 1);
+  F.g.attributes.aCell.needsUpdate = true; F.g.attributes.aBirth.needsUpdate = true;
   pieces.get(info.slot).card = k;
   $('#count').textContent = pieces.size;
 }
@@ -329,12 +390,12 @@ async function onNewPiece(info) {
 // ---------- view: outside orbit ⇄ inside through the door ----------
 const view = { yaw: -0.5, pitch: 0.12, inside: 0, insideT: 0, zoom: 1, vyaw: 0, turnHue: 0 };
 const clock0 = performance.now(), clock = () => (performance.now() - clock0) / 1000;
-const center = new THREE.Vector3(0, HOUSE_H * 0.42, 0);
+const center = new THREE.Vector3(0, HOUSE_H * 0.5, 0);
 function frameCamera(dt) {
   view.inside += (view.insideT - view.inside) * (1 - Math.exp(-dt * 1.8));
   const e = view.inside, ease = e * e * (3 - 2 * e);
   const half = Math.tan(THREE.MathUtils.degToRad(40 / 2));
-  const dist = Math.max((HOUSE_H * 0.5 + 1.5) / half, (Math.hypot(WX, DZ) * S * 0.5 + 1) / (half * camera.aspect)) * 1.45 * view.zoom;
+  const dist = Math.max((HOUSE_H * 0.5 + 1.5) / half, (Math.hypot(W, D) * 0.5 + 2.5) / (half * camera.aspect)) * 1.5 * view.zoom;
   const dir = new THREE.Vector3(Math.sin(view.yaw) * Math.cos(view.pitch), Math.sin(view.pitch), Math.cos(view.yaw) * Math.cos(view.pitch));
   const eye = new THREE.Vector3(0, 1.5, 0);
   const outPos = center.clone().addScaledVector(dir, dist);
@@ -363,46 +424,61 @@ function frame(now) {
   const ease = frameCamera(dt);
   dustMat.uniforms.uScale.value = innerHeight * renderer.getPixelRatio() / 900 * 18;
   // floating cards drift slowly around you inside
-  const n = cardGeo.instanceCount;
+  uniforms.uLift.value = (0.55 + Math.sin(t * 0.6) * 0.12) * (1 - ease);   // the house hovers above the floor
+  lampGlow.position.y = 1.6 + uniforms.uLift.value; roofGlow.position.y = 5 + uniforms.uLift.value;
+  const n = F.g.instanceCount, cq = new THREE.Quaternion(), m4 = new THREE.Matrix4(), Y = new THREE.Vector3(0, 1, 0);
   for (let i = 0; i < n; i++) {
-    const s = fSeed[i], a = i * 2.39996 + t * 0.03, ring = 2.3 + (i % 3) * 0.3;
-    fOff[i * 3] = Math.cos(a) * ring * 1.1; fOff[i * 3 + 1] = 0.9 + ((i * 3) % 5) * 0.62 + Math.sin(t * 0.5 + s * 9) * 0.1; fOff[i * 3 + 2] = Math.sin(a) * ring * 0.8;
+    const s = F.seed[i], a = i * 2.39996 + t * 0.03, ring = 2.05 + (i % 3) * 0.18;
+    const x = Math.cos(a) * ring * 1.25, y = 0.6 + ((i * 3) % 4) * 0.62 + Math.sin(t * 0.5 + s * 9) * 0.1, z = Math.sin(a) * ring * 0.9;
+    F.off[i * 3] = x; F.off[i * 3 + 1] = y; F.off[i * 3 + 2] = z;
+    // face the middle of the room, with a slight tilt
+    m4.lookAt(new THREE.Vector3(0, 1.5, 0), new THREE.Vector3(x, y, z), Y);
+    cq.setFromRotationMatrix(m4).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, (s - 0.5) * 0.3)));
+    F.quat.set([cq.x, cq.y, cq.z, cq.w], i * 4);
   }
-  cardGeo.attributes.aOff.needsUpdate = true;
-  cardMat.uniforms.uCam.value.copy(camera.position);
-  cardMat.uniforms.uFade.value = clamp((ease - 0.45) / 0.45, 0, 1);
+  F.g.attributes.aOff.needsUpdate = true; F.g.attributes.aQuat.needsUpdate = true;
+    cardMat.uniforms.uFade.value = clamp((ease - 0.45) / 0.45, 0, 1);
   cards.visible = cardMat.uniforms.uFade.value > 0.01;
-  compMat.uniforms.uBloom.value = lerp(1.15, 0.8, ease);
+  uniforms.uFade.value = 1 - ease * 0.6;
+  lampGlow.material.opacity = roofGlow.material.opacity = 1 - ease;
+  dust.visible = ease < 0.5;
+  compMat.uniforms.uBloom.value = lerp(1.1, 0.8, ease);
   updateHover();
   renderFrame(t);
   drawHands(now);
-  if (!$('#debug').hidden) $('#debug').textContent = `${pieces.size} pieces · ${N} glass cubes · ${renderer.info.render.calls} draws`;
+  if (!$('#debug').hidden) $('#debug').textContent = `${pieces.size} pieces · ${N} puzzle spots · ${renderer.info.render.calls} draws`;
   requestAnimationFrame(frame);
 }
 
 // ---------- picking ----------
 let pointerNdc = null, pointerSource = 'mouse', dwell = { key: null, t: 0 };
-const pickBoxes = new THREE.InstancedMesh(boxGeo, new THREE.MeshBasicMaterial(), N);
-{ const m = new THREE.Matrix4(); voxels.forEach((v, i) => { m.makeTranslation(v.pos.x, v.pos.y, v.pos.z); pickBoxes.setMatrixAt(i, m); }); }
+const pickBoxes = new THREE.InstancedMesh(new THREE.BoxGeometry(P * 0.9, P * 0.9, 0.08), new THREE.MeshBasicMaterial(), N);
+let pickLift = null;
+function placePickBoxes() {
+  const m = new THREE.Matrix4(), one = new THREE.Vector3(1, 1, 1), lift = uniforms.uLift.value;
+  slots.forEach((s, i) => pickBoxes.setMatrixAt(i, m.compose(s.pos.clone().setY(s.pos.y + lift), s.rot, one)));
+  pickBoxes.instanceMatrix.needsUpdate = true; pickBoxes.computeBoundingSphere(); pickLift = lift;
+}
 const pickCards = new THREE.InstancedMesh(new THREE.BoxGeometry(CARD, CARD, 0.05), new THREE.MeshBasicMaterial(), MAXF);
-const outline = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(S * 1.04, S * 1.04, S * 1.04)),
-  new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, depthTest: false }));
+const outline = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(pieceGeo.userData.outline.map(p => new THREE.Vector3(p.x * 1.12, p.y * 1.12, 0.04))),
+  new THREE.LineDashedMaterial({ color: 0xffffff, transparent: true, opacity: 0.95, depthTest: false, dashSize: 0.035, gapSize: 0.025 }));
+outline.computeLineDistances();
 outline.visible = false; outline.renderOrder = 9; world.add(outline);
 function updateHover() {
   if (!pointerNdc) { setHover(null); return; }
   ray.setFromCamera(pointerNdc, camera);
   if (cards.visible) {
-    const m = new THREE.Matrix4(), q = new THREE.Quaternion();
-    for (let i = 0; i < cardGeo.instanceCount; i++) {
-      const p = new THREE.Vector3(fOff[i * 3], fOff[i * 3 + 1], fOff[i * 3 + 2]);
-      q.setFromRotationMatrix(new THREE.Matrix4().lookAt(camera.position.clone().setY(p.y), p, new THREE.Vector3(0, 1, 0)));
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), lift = uniforms.uLift.value;
+    for (let i = 0; i < F.g.instanceCount; i++) {
+      const p = new THREE.Vector3(F.off[i * 3], F.off[i * 3 + 1] + lift, F.off[i * 3 + 2]);
+      q.fromArray(F.quat, i * 4);
       pickCards.setMatrixAt(i, m.compose(p, q, new THREE.Vector3(1, 1, 1)));
     }
-    pickCards.count = cardGeo.instanceCount; pickCards.instanceMatrix.needsUpdate = true; pickCards.computeBoundingSphere();
+    pickCards.count = F.g.instanceCount; pickCards.instanceMatrix.needsUpdate = true; pickCards.computeBoundingSphere();
     const hc = ray.intersectObject(pickCards)[0];
     if (hc) { const slot = [...pieces.values()].find(p => p.card === hc.instanceId)?.slot; if (slot != null) { setHover({ slot, card: hc.instanceId }); return; } }
   }
-  pickBoxes.computeBoundingSphere();
+  if (pickLift === null || Math.abs(pickLift - uniforms.uLift.value) > 0.03) placePickBoxes();
   const hits = ray.intersectObject(pickBoxes);
   // from inside, skip the cube you are standing next to; take the first one in front
   const h = hits[0];
@@ -416,7 +492,7 @@ function setHover(h) {
   uniforms.uHover.value = hover && hover.voxel != null ? hover.voxel : -1;
   cardMat.uniforms.uHover.value = hover && hover.card != null ? hover.card : -1;
   if (!hover) { outline.visible = false; $('#qrbox').classList.remove('call'); setCaption(''); return; }
-  if (hover.voxel != null) { outline.visible = true; outline.position.copy(voxels[hover.voxel].pos); } else outline.visible = false;
+  if (hover.voxel != null) { outline.visible = true; const sl = slots[hover.voxel]; outline.position.copy(sl.pos).y += uniforms.uLift.value; outline.quaternion.copy(sl.rot); } else outline.visible = false;
   const p = hover.slot != null ? pieces.get(hover.slot) : null;
   if (p) setCaption(`Piece ${p.slot + 1} · ${p.demo ? 'test piece' : timeAgo(p.t)}`);
   else setCaption('An empty spot · scan the code to light it up');
@@ -595,4 +671,4 @@ await loadAll();
 connect();
 requestAnimationFrame(frame);
 initHands();
-window.house = { view, pieces, addDemoPieces, onHands: (...a) => onHands(...a), openFocus, count: N };
+window.house = { view, pieces, addDemoPieces, camera, F, onHands: (...a) => onHands(...a), openFocus, count: N };

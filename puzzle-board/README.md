@@ -42,11 +42,13 @@ stop the server and delete the `data` folder. To keep an old board, rename the f
 
 ## New: the house (stories)
 
-Open http://localhost:8080/house for the light version: a house built from frosted glass cubes on a
-dark, reflective floor. Every piece of home lights up one cube from inside (the front wall fills
-first). The light is iridescent, coral, rose, violet and blue, and it shifts across the house as you
-turn it; rays of coloured light spill out over the floor. Step inside and the newest 32 pieces float
-around you as glowing glass cards.
+Open http://localhost:8080/house for the light version: an almost-house made of small translucent
+puzzle pieces that hovers above a glossy floor in a warm haze. Low down the puzzle is nearly
+assembled; higher up pieces come loose, tilt away and drift around it, and the whole thing keeps
+gently gathering itself. Every piece of home lights up one puzzle piece (the front wall fills first).
+The light is iridescent, amber, coral, rose, violet and a little blue, and it shifts as you turn the
+house. Step inside and the newest 28 pieces float around you as glowing puzzle pieces with clear
+photos.
 
 | | What it does |
 | --- | --- |
