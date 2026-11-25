@@ -42,18 +42,20 @@ stop the server and delete the `data` folder. To keep an old board, rename the f
 
 ## New: the house (stories)
 
-Open http://localhost:8080/house for the warm version: an abstract paper-lantern house whose walls,
-gables and roof are made of the pieces, glowing from inside, with embers drifting up like a fire.
-The house grows when it fills up.
+Open http://localhost:8080/house for the light version: a house built from frosted glass cubes on a
+dark, reflective floor. Every piece of home lights up one cube from inside (the front wall fills
+first). The light is iridescent, coral, rose, violet and blue, and it shifts across the house as you
+turn it; rays of coloured light spill out over the floor. Step inside and the newest 32 pieces float
+around you as glowing glass cards.
 
 | | What it does |
 | --- | --- |
 | ✊ grab and move | turn the house (inside: look around) |
 | 🙌 two hands apart / together | step inside, where the photos float around you / step back out |
-| ☝️ point | a spot lights up under your finger; hold on a piece to open it big, point at an empty spot and the QR code lights up |
+| ☝️ point | the cube under your finger lights up; hold on a piece to open it big, point at an empty spot and the QR code lights up |
 | mouse | drag to turn, scroll or double-click to step in and out, click a piece to open it |
 | `I` or space | step in / out |
-| `X` / `Shift+X` | add 40 / 200 test pieces (only on screen) |
+| `X` / `Shift+X` | add 60 / 300 test pieces (only on screen) |
 
 Fonts: Fraunces (stand-in for Fields) and Inter, both in `public/type/` (SIL Open Font License).
 

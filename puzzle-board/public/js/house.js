@@ -1,6 +1,6 @@
-// stories: the house board. Every piece of home is a lit pane in the walls of an abstract,
-// paper-lantern house. Grab to turn it, spread your hands to step inside, where the photos
-// float around you, and point to pick a spot.
+// stories: the house board. A house made of frosted glass cubes, each one lit from inside by a
+// piece of home. The light is iridescent and shifts as you turn the house. Spread your hands to
+// step in through the door: inside, every pane is a shimmering piece of light.
 import * as THREE from './three.module.min.js';
 import { CONFIG } from './config.js';
 
@@ -9,407 +9,419 @@ const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const lerp = (a, b, t) => a + (b - a) * t;
 const hash = n => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
 
-// ---------- renderer ----------
+// ---------- renderer + post (bloom) ----------
 const canvas = $('#gl');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-renderer.outputColorSpace = THREE.SRGBColorSpace;
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+renderer.setClearColor(0x000000, 1);
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(42, 1, 0.02, 400);
+const camera = new THREE.PerspectiveCamera(40, 1, 0.05, 400);
 const handCanvas = $('#hands'), hctx = handCanvas.getContext('2d');
+
+const RT = (w, h, samples = 0) => new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, samples, depthBuffer: samples > 0 });
+let rtScene, mips = [];
+const quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2));
+const quadScene = new THREE.Scene(); quadScene.add(quad);
+const fsVert = `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`;
+const downMat = new THREE.ShaderMaterial({ vertexShader: fsVert, uniforms: { tSrc: { value: null }, uTexel: { value: new THREE.Vector2() }, uFirst: { value: 0 } },
+  fragmentShader: `uniform sampler2D tSrc; uniform vec2 uTexel; uniform float uFirst; varying vec2 vUv;
+  vec3 s(vec2 o){ vec3 c = texture2D(tSrc, vUv + o*uTexel).rgb; if (uFirst > 0.5) { float l = max(c.r,max(c.g,c.b)); c *= smoothstep(0.3, 1.2, l); } return c; }
+  void main(){ vec3 c = s(vec2(0))*4.0 + s(vec2(-1,-1)) + s(vec2(1,-1)) + s(vec2(-1,1)) + s(vec2(1,1)); gl_FragColor = vec4(c/8.0, 1.0); }` });
+const upMat = new THREE.ShaderMaterial({ vertexShader: fsVert, blending: THREE.AdditiveBlending, depthTest: false, transparent: true,
+  uniforms: { tSrc: { value: null }, uTexel: { value: new THREE.Vector2() } },
+  fragmentShader: `uniform sampler2D tSrc; uniform vec2 uTexel; varying vec2 vUv;
+  vec3 s(vec2 o){ return texture2D(tSrc, vUv + o*uTexel).rgb; }
+  void main(){ vec3 c = s(vec2(-2,0)) + s(vec2(2,0)) + s(vec2(0,-2)) + s(vec2(0,2)) + (s(vec2(-1,-1)) + s(vec2(1,-1)) + s(vec2(-1,1)) + s(vec2(1,1)))*2.0;
+    gl_FragColor = vec4(c/12.0, 1.0); }` });
+const compMat = new THREE.ShaderMaterial({ vertexShader: fsVert,
+  uniforms: { tScene: { value: null }, tBloom: { value: null }, uBloom: { value: 0.9 }, uTime: { value: 0 } },
+  fragmentShader: `uniform sampler2D tScene, tBloom; uniform float uBloom, uTime; varying vec2 vUv;
+  vec3 aces(vec3 x){ return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14), 0.0, 1.0); }
+  void main(){
+    vec3 c = texture2D(tScene, vUv).rgb + texture2D(tBloom, vUv).rgb * uBloom;
+    vec2 d = vUv - 0.5; c *= 1.0 - dot(d, d) * 0.9;                       // vignette
+    c = aces(c * 1.05);
+    c = pow(c, vec3(1.0/2.2));
+    c += (fract(sin(dot(vUv*1000.0 + uTime, vec2(12.9898,78.233))) * 43758.5453) - 0.5) / 255.0;   // dither
+    gl_FragColor = vec4(c, 1.0); }` });
 function resize() {
+  const pr = renderer.getPixelRatio(), w = Math.floor(innerWidth * pr), h = Math.floor(innerHeight * pr);
   renderer.setSize(innerWidth, innerHeight, false);
   camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
   handCanvas.width = innerWidth * devicePixelRatio; handCanvas.height = innerHeight * devicePixelRatio;
+  rtScene?.dispose(); mips.forEach(m => m.dispose());
+  rtScene = RT(w, h, 4); mips = [];
+  let mw = w, mh = h;
+  for (let i = 0; i < 6; i++) { mw = Math.max(1, mw >> 1); mh = Math.max(1, mh >> 1); mips.push(RT(mw, mh)); }
 }
 addEventListener('resize', resize); resize();
+function pass(mat, target) { quad.material = mat; renderer.setRenderTarget(target); renderer.render(quadScene, quadCam); }
+function renderFrame(t) {
+  renderer.setRenderTarget(rtScene); renderer.clear(); renderer.render(scene, camera);
+  let src = rtScene.texture, sw = rtScene.width, sh = rtScene.height;
+  for (let i = 0; i < mips.length; i++) {
+    downMat.uniforms.tSrc.value = src; downMat.uniforms.uTexel.value.set(1 / sw, 1 / sh); downMat.uniforms.uFirst.value = i === 0 ? 1 : 0;
+    pass(downMat, mips[i]); src = mips[i].texture; sw = mips[i].width; sh = mips[i].height;
+  }
+  renderer.autoClear = false;
+  for (let i = mips.length - 1; i > 0; i--) {
+    upMat.uniforms.tSrc.value = mips[i].texture; upMat.uniforms.uTexel.value.set(1 / mips[i].width, 1 / mips[i].height);
+    pass(upMat, mips[i - 1]);
+  }
+  renderer.autoClear = true;
+  compMat.uniforms.tScene.value = rtScene.texture; compMat.uniforms.tBloom.value = mips[0].texture; compMat.uniforms.uTime.value = t % 100;
+  pass(compMat, null);
+}
 
-// ---------- background: warm dark room, lit from the house ----------
+// ---------- the room: dark floor that reflects the house, and coloured light spilling out ----------
+scene.background = new THREE.Color(0.012, 0.007, 0.01);
+const world = new THREE.Group(); scene.add(world);
 function radialTexture(stops, size = 256) {
   const c = document.createElement('canvas'); c.width = c.height = size;
   const x = c.getContext('2d'), g = x.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
   for (const [p, col] of stops) g.addColorStop(p, col);
   x.fillStyle = g; x.fillRect(0, 0, size, size);
-  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+  return new THREE.CanvasTexture(c);
 }
-{
-  const c = document.createElement('canvas'); c.width = 4; c.height = 512;
-  const x = c.getContext('2d'), g = x.createLinearGradient(0, 0, 0, 512);
-  g.addColorStop(0, '#120804'); g.addColorStop(0.55, '#2b150a'); g.addColorStop(1, '#170b05');
-  x.fillStyle = g; x.fillRect(0, 0, 4, 512);
-  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
-  scene.background = t;
-}
-const glowTex = radialTexture([[0, 'rgba(255,255,255,1)'], [0.25, 'rgba(255,255,255,0.45)'], [1, 'rgba(255,255,255,0)']]);
-const softTex = radialTexture([[0, 'rgba(255,255,255,0.9)'], [0.5, 'rgba(255,255,255,0.25)'], [1, 'rgba(255,255,255,0)']]);
-const additive = (map, color, opacity) => new THREE.SpriteMaterial({ map, color, opacity, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+const softTex = radialTexture([[0, 'rgba(255,255,255,1)'], [0.4, 'rgba(255,255,255,0.35)'], [1, 'rgba(255,255,255,0)']]);
 
-const world = new THREE.Group(); scene.add(world);           // the house turns inside this group
-const halo = new THREE.Sprite(additive(softTex, 0xff9a3d, 0.42)); scene.add(halo);
-const floorGlow = new THREE.Mesh(new THREE.PlaneGeometry(1, 1),
-  new THREE.MeshBasicMaterial({ map: softTex, color: 0xff8a2a, transparent: true, opacity: 0.55, depthWrite: false, blending: THREE.AdditiveBlending }));
-floorGlow.rotation.x = -Math.PI / 2; world.add(floorGlow);
-
-// Light spilling out of the base, like the reference: thin warm rays on the floor.
-const rays = new THREE.Group(); world.add(rays);
+// ---------- the house: a hollow shell of glass cubes with a stepped gable roof and a door ----------
+const S = 0.5;                       // size of one cube
+const WX = 18, DZ = 14, HY = 8;      // footprint and wall height in cubes
+const voxels = [];
 {
-  const c = document.createElement('canvas'); c.width = 64; c.height = 256;
-  const x = c.getContext('2d'), g = x.createLinearGradient(0, 0, 0, 256);
-  g.addColorStop(0, 'rgba(255,255,255,0.9)'); g.addColorStop(1, 'rgba(255,255,255,0)');
-  x.fillStyle = g; x.beginPath(); x.moveTo(26, 0); x.lineTo(38, 0); x.lineTo(64, 256); x.lineTo(0, 256); x.closePath(); x.fill();
-  const tex = new THREE.CanvasTexture(c);
-  for (let i = 0; i < 26; i++) {
-    const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: tex, color: 0xffa040, transparent: true,
-      opacity: 0.12 + hash(i) * 0.12, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }));
-    m.rotation.x = -Math.PI / 2; m.userData.a = i / 26 * Math.PI * 2 + hash(i + 9) * 0.2; m.userData.len = 1.2 + hash(i + 3) * 1.6;
-    rays.add(m);
+  const has = new Set(), add = (x, y, z, prio) => { const k = `${x},${y},${z}`; if (has.has(k)) return; has.add(k); voxels.push({ x, y, z, prio }); };
+  const door = (x, y, z) => z === DZ - 1 && (x === 8 || x === 9) && y < 5;
+  for (let y = 0; y < HY; y++) for (let x = 0; x < WX; x++) for (let z = 0; z < DZ; z++) {
+    if (!(x === 0 || x === WX - 1 || z === 0 || z === DZ - 1)) continue;
+    if (door(x, y, z)) continue;
+    const front = z === DZ - 1, back = z === 0;
+    const face = front ? 0 : (x === WX - 1 ? 1 : x === 0 ? 2 : 3);
+    const cx = front || back ? x - (WX - 1) / 2 : z - (DZ - 1) / 2;
+    add(x, y, z, face * 1000 + Math.hypot(cx, (y - HY * 0.45) * 1.2));
   }
+  // roof: each layer steps in by one cube on the long sides; gable ends stay closed
+  for (let l = 0; ; l++) {
+    const x0 = l * 2, x1 = WX - 1 - l * 2, y = HY + l; if (x1 - x0 < 1) break;
+    for (let x = x0; x <= x1; x++) for (let z = 0; z < DZ; z++) {
+      const edge = x <= x0 + 1 || x >= x1 - 1, gable = z === 0 || z === DZ - 1;
+      if (!edge && !gable && x1 - x0 > 3) continue;
+      add(x, y, z, 4000 + l * 30 + Math.abs(z - (DZ - 1) / 2));
+    }
+  }
+  voxels.sort((a, b) => a.prio - b.prio);
 }
+const N = voxels.length;
+const HOUSE_H = (HY + WX / 4) * S;
+const boxGeo = new THREE.BoxGeometry(S * 0.97, S * 0.97, S * 0.97);
+const inst = new THREE.InstancedBufferGeometry().copy(boxGeo);
+inst.instanceCount = N;
+const aCell = new Float32Array(N).fill(-1), aBirth = new Float32Array(N).fill(-100), aSeed = new Float32Array(N);
+const aOff = new Float32Array(N * 3);
+voxels.forEach((v, i) => {
+  aOff[i * 3] = (v.x - (WX - 1) / 2) * S; aOff[i * 3 + 1] = (v.y + 0.5) * S; aOff[i * 3 + 2] = (v.z - (DZ - 1) / 2) * S;
+  aSeed[i] = hash(i * 1.37); v.pos = new THREE.Vector3(aOff[i * 3], aOff[i * 3 + 1], aOff[i * 3 + 2]);
+});
+inst.setAttribute('aOff', new THREE.InstancedBufferAttribute(aOff, 3));
+inst.setAttribute('aCell', new THREE.InstancedBufferAttribute(aCell, 1));
+inst.setAttribute('aBirth', new THREE.InstancedBufferAttribute(aBirth, 1));
+inst.setAttribute('aSeed', new THREE.InstancedBufferAttribute(aSeed, 1));
 
-// ---------- piece textures: a postage-stamp edge around a warm lit photo ----------
-const PT = CONFIG.pieceTexture >= 256 ? 256 : 128;
-const PAPERS = ['#fbf3e2', '#cff0d6', '#f9d0d8', '#fce1c4', '#fff0b8', '#e8dcff'];
-function stampPath(x, s, m, n = 9, r = s * 0.028) {
-  const a = m, b = s - m, step = (b - a) / n;
-  x.beginPath(); x.moveTo(a, a);
-  for (let i = 0; i < n; i++) { const c = a + step * (i + 0.5); x.lineTo(c - r, a); x.arc(c, a, r, Math.PI, 0, true); }
-  x.lineTo(b, a);
-  for (let i = 0; i < n; i++) { const c = a + step * (i + 0.5); x.lineTo(b, c - r); x.arc(b, c, r, -Math.PI / 2, Math.PI / 2, true); }
-  x.lineTo(b, b);
-  for (let i = 0; i < n; i++) { const c = b - step * (i + 0.5); x.lineTo(c + r, b); x.arc(c, b, r, 0, -Math.PI, true); }
-  x.lineTo(a, b);
-  for (let i = 0; i < n; i++) { const c = b - step * (i + 0.5); x.lineTo(a, c + r); x.arc(a, c, r, Math.PI / 2, -Math.PI / 2, true); }
-  x.closePath();
-}
-function averageColor(img) {
-  const c = document.createElement('canvas'); c.width = c.height = 8;
-  const x = c.getContext('2d'); x.drawImage(img, 0, 0, 8, 8);
-  const d = x.getImageData(0, 0, 8, 8).data; let r = 0, g = 0, b = 0;
-  for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; }
-  const col = new THREE.Color(r / 64 / 255, g / 64 / 255, b / 64 / 255);
-  const hsl = {}; col.getHSL(hsl);
-  return new THREE.Color().setHSL(hsl.h, Math.max(0.55, hsl.s), 0.6);
-}
-function pieceCanvas(img, seed, size = PT) {
-  const c = document.createElement('canvas'); c.width = c.height = size;
-  const x = c.getContext('2d'), m = size * 0.04;
-  stampPath(x, size, m); x.fillStyle = PAPERS[Math.floor(hash(seed) * PAPERS.length)]; x.fill();
-  const i0 = size * 0.14, w = size - 2 * i0;
-  x.save(); x.beginPath(); x.roundRect(i0, i0, w, w, size * 0.03); x.clip();
-  const iw = img.width || img.videoWidth, ih = img.height || img.videoHeight, k = Math.max(w / iw, w / ih);
-  x.drawImage(img, i0 + (w - iw * k) / 2, i0 + (w - ih * k) / 2, iw * k, ih * k);
-  // warm light from behind the paper
-  const g = x.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, w * 0.75);
-  g.addColorStop(0, 'rgba(255,214,150,0.28)'); g.addColorStop(1, 'rgba(120,50,10,0.25)');
-  x.fillStyle = g; x.fillRect(i0, i0, w, w);
-  x.restore();
-  return c;
-}
-const emptyTex = (() => {
-  const c = document.createElement('canvas'); c.width = c.height = 128;
-  const x = c.getContext('2d');
-  stampPath(x, 128, 5); x.fillStyle = 'rgba(255,205,150,0.16)'; x.fill();
-  x.strokeStyle = 'rgba(255,215,170,0.22)'; x.lineWidth = 1.5; x.stroke();
-  x.strokeStyle = 'rgba(255,225,185,0.45)'; x.lineWidth = 3; x.lineCap = 'round';
-  x.beginPath(); x.moveTo(64, 54); x.lineTo(64, 74); x.moveTo(54, 64); x.lineTo(74, 64); x.stroke();
-  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
-})();
-const outlineTex = (() => {
-  const c = document.createElement('canvas'); c.width = c.height = 256;
-  const x = c.getContext('2d');
-  stampPath(x, 256, 14, 9, 8); x.strokeStyle = '#fff'; x.lineWidth = 6; x.setLineDash([12, 8]); x.stroke();
-  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
-})();
+// Photo atlas: each piece is blurred light inside its cube (the glass is frosted).
+const ATLAS = 2048, CELL = 64, PER = ATLAS / CELL;
+const atlasCanvas = document.createElement('canvas'); atlasCanvas.width = atlasCanvas.height = ATLAS;
+const actx = atlasCanvas.getContext('2d'); actx.fillStyle = '#000'; actx.fillRect(0, 0, ATLAS, ATLAS);
+const atlasTex = new THREE.CanvasTexture(atlasCanvas);
+atlasTex.colorSpace = THREE.SRGBColorSpace; atlasTex.generateMipmaps = true; atlasTex.minFilter = THREE.LinearMipmapLinearFilter;
+// a sharper atlas for the floating cards inside (the latest pieces only)
+const CELL2 = 128, PER2 = ATLAS / CELL2;
+const cardCanvas = document.createElement('canvas'); cardCanvas.width = cardCanvas.height = ATLAS;
+const cctx = cardCanvas.getContext('2d');
+const cardTex = new THREE.CanvasTexture(cardCanvas);
+cardTex.colorSpace = THREE.SRGBColorSpace; cardTex.minFilter = THREE.LinearMipmapLinearFilter; cardTex.anisotropy = 4;
 
-// One shader for lit panes: shows the photo the right way round from outside and inside,
-// with a slow candle flicker and a glow when picked.
-const paneVert = `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`;
-const paneFrag = `
-uniform sampler2D map; uniform float uLit, uTime, uSeed, uHover, uOpacity, uExpo; uniform vec3 uTint;
-varying vec2 vUv;
+const uniforms = {
+  uTime: { value: 0 }, uTurn: { value: 0 }, uAtlas: { value: atlasTex }, uPer: { value: PER },
+  uLight: { value: new THREE.Vector3(0, HOUSE_H * 0.45, 0) }, uMirror: { value: 0 }, uInside: { value: 0 }, uHover: { value: -1 },
+};
+const glassVert = `
+attribute vec3 aOff; attribute float aCell, aBirth, aSeed;
+uniform float uMirror;
+varying vec3 vW, vN, vL; varying vec2 vUv; varying float vCell, vBirth, vSeed, vId;
 void main(){
-  vec2 uv = vUv; if (!gl_FrontFacing) uv.x = 1.0 - uv.x;
-  vec4 t = texture2D(map, uv);
-  if (t.a < 0.5) discard;
-  float f = 0.88 + 0.08*sin(uTime*6.3 + uSeed*17.0)*sin(uTime*2.7 + uSeed*5.0) + 0.04*sin(uTime*13.0 + uSeed*3.0);
-  vec3 col = t.rgb * (0.35 + 0.85*uLit*f) * uExpo;
-  col = mix(col, col*vec3(1.12,0.96,0.78), 0.4);
-  float edge = smoothstep(0.5, 0.2, max(abs(uv.x-0.5), abs(uv.y-0.5)));
-  col += uTint * uLit * f * 0.18 * edge + vec3(1.0,0.85,0.6) * uHover * 0.25;
-  gl_FragColor = vec4(col, uOpacity);
-  #include <colorspace_fragment>
+  vec3 p = position + aOff;
+  if (uMirror > 0.5) p.y = -p.y;
+  vec4 w = modelMatrix * vec4(p, 1.0);
+  vW = w.xyz; vN = normalize(mat3(modelMatrix) * (normal * vec3(1.0, uMirror > 0.5 ? -1.0 : 1.0, 1.0)));
+  vL = position / ${(S * 0.97).toFixed(3)}; vUv = uv; vCell = aCell; vBirth = aBirth; vSeed = aSeed; vId = float(gl_InstanceID);
+  gl_Position = projectionMatrix * viewMatrix * w;
 }`;
-const emptyMat = new THREE.MeshBasicMaterial({ map: emptyTex, transparent: true, depthWrite: false, side: THREE.DoubleSide, opacity: 1 });
-const clock0 = performance.now();
-const clock = () => (performance.now() - clock0) / 1000;
-const timeU = { value: 0 }, expoU = { value: 1 };
+const glassFrag = `
+uniform float uTime, uTurn, uPer, uMirror, uInside, uHover; uniform vec3 uLight; uniform sampler2D uAtlas;
+varying vec3 vW, vN, vL; varying vec2 vUv; varying float vCell, vBirth, vSeed, vId;
+// the reference palette: coral, rose, hot pink, violet, periwinkle blue, back to amber
+vec3 pal(float h){
+  h = fract(h) * 6.0;
+  vec3 c0 = vec3(1.00, 0.42, 0.22), c1 = vec3(1.00, 0.22, 0.30), c2 = vec3(1.00, 0.30, 0.62),
+       c3 = vec3(0.68, 0.32, 1.00), c4 = vec3(0.42, 0.50, 1.00), c5 = vec3(1.00, 0.62, 0.30);
+  float f = fract(h); f = f * f * (3.0 - 2.0 * f);
+  if (h < 1.0) return mix(c0, c1, f); if (h < 2.0) return mix(c1, c2, f); if (h < 3.0) return mix(c2, c3, f);
+  if (h < 4.0) return mix(c3, c4, f); if (h < 5.0) return mix(c4, c5, f); return mix(c5, c0, f);
+}
+void main(){
+  vec3 N = normalize(vN), V = normalize(cameraPosition - vW);
+  float ndv = abs(dot(N, V)), fres = pow(1.0 - ndv, 3.0);
+  // big soft patches of colour over the whole house; they slide as the house turns
+  vec3 q = vW * 0.32;
+  float field = sin(q.x * 1.3 + uTurn * 2.2 + uTime * 0.05) + sin(q.y * 1.7 - q.z * 0.9 + uTurn * 1.4)
+              + sin((q.x + q.z) * 0.9 - uTime * 0.04) * 0.8;
+  float h = field * 0.22 + ndv * 0.22 + vSeed * 0.05 + uTurn * 0.25;
+  vec3 col = pal(h);
+  // glow from a lamp low in the middle of the house
+  float d = length(vW - uLight);
+  float lamp = 0.45 + 0.75 * exp(-d * 0.22);
+  float has = step(0.0, vCell);
+  if (has > 0.5) {
+    vec2 cell = vec2(mod(vCell, uPer), uPer - 1.0 - floor(vCell / uPer));
+    vec3 photo = texture2D(uAtlas, (cell + clamp(vUv, 0.08, 0.92)) / uPer, 2.2).rgb;
+    float lum = dot(photo, vec3(0.3, 0.55, 0.15));
+    vec3 tint = photo / max(lum, 0.08);
+    col = mix(col, col * (0.5 + lum) * mix(vec3(1.0), clamp(tint, 0.0, 2.0), 0.45), 0.85);   // the photo glows through frosted glass
+  } else col *= 0.62;
+  // frosted cube: brighter in the middle of each face, a fine light seam on the edges
+  vec3 a = abs(vL) * 2.0;
+  float e1 = max(a.x, max(a.y, a.z)), e2 = a.x + a.y + a.z - e1 - min(a.x, min(a.y, a.z));
+  float seam = smoothstep(0.9, 0.99, e2);
+  float inner = 1.0 - 0.18 * smoothstep(0.3, 0.95, e2);
+  float shimmer = 0.9 + 0.1 * sin(uTime * 1.1 + vSeed * 20.0 + dot(vW, vec3(1.3, 0.7, 1.1)));
+  col *= lamp * inner * shimmer * (0.72 + vSeed * 0.4) * 0.78;
+  col += pal(h + 0.33) * fres * 0.45;                 // the iridescent rim: another colour at grazing angles
+  col = mix(col, col * 0.55 + pal(h + 0.15) * 0.25 * lamp, seam);
+  float age = uTime - vBirth;
+  col += vec3(1.0, 0.75, 0.65) * has * step(0.0, age) * exp(-max(age, 0.0) * 1.4) * 2.0;
+  if (abs(vId - uHover) < 0.5) col = col * 1.6 + 0.12;
+  float alpha = 0.86;
+  if (uMirror > 0.5) { col *= 0.55 * exp(vW.y * 0.6); alpha = 1.0; }
+  gl_FragColor = vec4(col, alpha);
+}`;
+const glassMat = new THREE.ShaderMaterial({ vertexShader: glassVert, fragmentShader: glassFrag, uniforms,
+  transparent: true, depthWrite: true, side: THREE.FrontSide });
+const house = new THREE.Mesh(inst, glassMat); house.frustumCulled = false; house.renderOrder = 3; world.add(house);
+const mirrorMat = glassMat.clone(); mirrorMat.uniforms = { ...uniforms, uMirror: { value: 1 } }; mirrorMat.side = THREE.BackSide;
+const mirror = new THREE.Mesh(inst, mirrorMat); mirror.frustumCulled = false; mirror.renderOrder = 1; world.add(mirror);
 
-// ---------- the house: slots on walls, gables and roof ----------
-const PANE = 0.9;
-let dims = null, slots = [], houseGroup = null, edges = null;
-const pieces = new Map();   // slot -> piece { id, slot, tex, tint, lit, mesh, glow, float, born, demo }
-function capacityOf([W, D, H]) { return buildSlots(W, D, H).length; }
-function buildSlots(W, D, H) {
-  const out = [], push = (wall, p, n, u, order) => out.push({ wall, pos: p, normal: n, up: u, order });
-  const V = (x, y, z) => new THREE.Vector3(x, y, z), Y = V(0, 1, 0);
-  const wallCells = (wall, cols, rows, at, normal, prio) => {
-    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
-      const u = c - cols / 2 + 0.5, v = r + 0.5;
-      const d = Math.hypot(u, (v - rows * 0.45) * 1.15);
-      push(wall, at(u, v), normal, Y, prio * 1000 + d);
-    }
-  };
-  wallCells('Front wall', W, H, (u, v) => V(u, v, D / 2), V(0, 0, 1), 0);
-  wallCells('Right wall', D, H, (u, v) => V(W / 2, v, -u), V(1, 0, 0), 1);
-  wallCells('Left wall', D, H, (u, v) => V(-W / 2, v, u), V(-1, 0, 0), 1.5);
-  wallCells('Back wall', W, H, (u, v) => V(-u, v, -D / 2), V(0, 0, -1), 2);
-  for (const [side, zz] of [[1, D / 2], [-1, -D / 2]]) {          // gables: the triangle under the roof
-    for (let r = 0; ; r++) {
-      const n = 2 * Math.floor(W / 2 - r - 1); if (n <= 0) break;
-      for (let c = 0; c < n; c++) { const u = c - n / 2 + 0.5; push(side > 0 ? 'Front gable' : 'Back gable', V(u * side, H + r + 0.5, zz), V(0, 0, side), Y, 3000 + r * 10 + Math.abs(u)); }
-    }
-  }
-  const slope = W / 2 * Math.SQRT2, rows = Math.floor(slope);   // roof: two slopes at 45°
-  for (const s of [1, -1]) {
-    const nrm = V(s, 1, 0).normalize(), up = V(-s, 1, 0).normalize();
-    for (let r = 0; r < rows; r++) for (let c = 0; c < D; c++) {
-      const along = (r + 0.5) * (slope / rows), u = c - D / 2 + 0.5;
-      const p = V(s * W / 2, H, u).addScaledVector(up, along);
-      push(s > 0 ? 'Roof' : 'Roof', p, nrm, up, 4000 + r * 10 + Math.abs(u) + (s < 0 ? 0.5 : 0));
-    }
-  }
-  out.sort((a, b) => a.order - b.order);
-  return out;
-}
-const SIZES = [[5, 4, 3], [6, 5, 4], [7, 5, 5], [8, 6, 5], [9, 7, 6], [10, 8, 7], [12, 9, 8], [14, 11, 9]];
-function pickDims(n) { return SIZES.find(s => capacityOf(s) >= n * 1.15 + 12) || SIZES[SIZES.length - 1]; }
+// Floor: dark, slightly glossy, lit by the house. Coloured rays spill out across it.
+const floorMat = new THREE.ShaderMaterial({ transparent: true, depthWrite: false, uniforms: { uTime: uniforms.uTime, uTurn: uniforms.uTurn, uInside: uniforms.uInside },
+  vertexShader: `varying vec3 vW; void main(){ vec4 w = modelMatrix*vec4(position,1.0); vW = w.xyz; gl_Position = projectionMatrix*viewMatrix*w; }`,
+  fragmentShader: `uniform float uTime, uTurn, uInside; varying vec3 vW;
+  void main(){
+    float r = length(vW.xz), a = atan(vW.z, vW.x);
+    float rays = pow(0.5 + 0.5*sin(a*13.0 + sin(a*5.0)*1.5 + uTurn*0.6), 6.0) * 0.8 + pow(0.5 + 0.5*sin(a*7.0 - 1.3), 10.0);
+    float fall = exp(-max(r - 3.0, 0.0) * 0.32);
+    vec3 c1 = vec3(1.0, 0.3, 0.35), c2 = vec3(0.55, 0.4, 1.0), c3 = vec3(1.0, 0.55, 0.3);
+    vec3 tint = mix(mix(c1, c2, 0.5 + 0.5*sin(a*2.0 + uTurn)), c3, 0.5 + 0.5*sin(a*3.0 - 0.7));
+    vec3 col = tint * (rays * fall * 0.55 + exp(-r * 0.35) * 0.35) * (1.0 - uInside * 0.75);
+    float dim = smoothstep(26.0, 6.0, r);
+    gl_FragColor = vec4(col * dim + vec3(0.025, 0.014, 0.02), 0.62);
+  }` });
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(80, 80), floorMat);
+floor.rotation.x = -Math.PI / 2; floor.renderOrder = 2; world.add(floor);
+// the back wall of the room catches a soft glow
+const wallGlow = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: softTex, color: new THREE.Color(0.22, 0.08, 0.12),
+  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+wallGlow.scale.set(40, 22, 1); wallGlow.position.set(0, 4, -14); world.add(wallGlow);
 
-function buildHouse(d) {
-  dims = d; slots = buildSlots(...d);
-  if (houseGroup) world.remove(houseGroup);
-  houseGroup = new THREE.Group(); world.add(houseGroup);
-  const [W, D, H] = d;
-  // Glowing outline of the house shape: the only "drawn" part, like a lantern frame.
-  const top = H + W / 2, pts = [];
-  const corners = [[-W / 2, D / 2], [W / 2, D / 2], [W / 2, -D / 2], [-W / 2, -D / 2]];
-  for (let i = 0; i < 4; i++) { const [x1, z1] = corners[i], [x2, z2] = corners[(i + 1) % 4]; pts.push(x1, 0, z1, x2, 0, z2, x1, H, z1, x2, H, z2, x1, 0, z1, x1, H, z1); }
-  for (const z of [D / 2, -D / 2]) pts.push(-W / 2, H, z, 0, top, z, 0, top, z, W / 2, H, z);
-  pts.push(0, top, D / 2, 0, top, -D / 2);
-  const eg = new THREE.BufferGeometry(); eg.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
-  edges = new THREE.LineSegments(eg, new THREE.LineBasicMaterial({ color: 0xffc56b, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false }));
-  houseGroup.add(edges);
-  // Inner light: a warm core you see through the paper.
-  const core = new THREE.Sprite(additive(glowTex, 0xff9b45, 0.55)); core.position.set(0, H * 0.55, 0); core.scale.setScalar(Math.max(W, H) * 1.5);
-  core.userData.core = true; houseGroup.add(core);
-  // Empty panes for every slot; lit panes replace them.
-  const geo = new THREE.PlaneGeometry(PANE, PANE);
-  slots.forEach((s, i) => {
-    const m = new THREE.Mesh(geo, emptyMat); orient(m, s); m.userData.slot = i; s.empty = m; houseGroup.add(m);
-  });
-  for (const p of pieces.values()) placePiece(p);
-  floorGlow.scale.set(W * 3.2, D * 3.2, 1);
-  rays.children.forEach(m => { const a = m.userData.a, r = Math.max(W, D) * 0.55, len = m.userData.len * Math.max(W, D) * 0.6;
-    m.scale.set(len * 0.25, len, 1); m.position.set(Math.cos(a) * (r + len / 2), 0.01, Math.sin(a) * (r + len / 2)); m.rotation.z = -a + Math.PI / 2; });
-}
-function orient(m, s, lift = 0) {
-  m.position.copy(s.pos).addScaledVector(s.normal, lift);
-  const x = new THREE.Vector3().crossVectors(s.up, s.normal).normalize();
-  m.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, s.up, s.normal));
-}
+// Floating dust of light, slow and few.
+const DUST = 260, dPos = new Float32Array(DUST * 3), dSeed = new Float32Array(DUST);
+for (let i = 0; i < DUST; i++) { dPos[i * 3] = (Math.random() - 0.5) * 18; dPos[i * 3 + 1] = Math.random() * 10; dPos[i * 3 + 2] = (Math.random() - 0.5) * 16; dSeed[i] = Math.random(); }
+const dustGeo = new THREE.BufferGeometry(); dustGeo.setAttribute('position', new THREE.BufferAttribute(dPos, 3)); dustGeo.setAttribute('aSeed', new THREE.BufferAttribute(dSeed, 1));
+const dustMat = new THREE.ShaderMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, uniforms: { uTime: uniforms.uTime, uScale: { value: 1 } },
+  vertexShader: `attribute float aSeed; uniform float uTime, uScale; varying float vA, vS;
+    void main(){ vec3 p = position; p.y = mod(p.y + uTime * (0.08 + aSeed * 0.12), 10.0); p.x += sin(uTime*0.3 + aSeed*30.0)*0.4;
+      vec4 mv = modelViewMatrix*vec4(p,1.0); gl_Position = projectionMatrix*mv; vS = aSeed;
+      vA = (0.3 + 0.7*sin(uTime*1.5 + aSeed*40.0)*0.5+0.35) * smoothstep(0.0, 1.5, p.y) * smoothstep(10.0, 7.0, p.y);
+      gl_PointSize = (4.0 + aSeed * 10.0) * uScale / -mv.z; }`,
+  fragmentShader: `varying float vA, vS; void main(){ float r = length(gl_PointCoord-0.5); if (r > 0.5) discard;
+    vec3 c = mix(vec3(1.0,0.55,0.6), vec3(0.7,0.6,1.0), vS); gl_FragColor = vec4(c * smoothstep(0.5,0.0,r) * vA * 0.6, 1.0); }` });
+const dust = new THREE.Points(dustGeo, dustMat); dust.frustumCulled = false; dust.renderOrder = 4; world.add(dust);
+
+// Floating panes inside: thin glass cards, one per piece, visible when you step in.
+const MAXF = 32, CARD = 1.15;
+const cardGeo = new THREE.InstancedBufferGeometry().copy(new THREE.BoxGeometry(CARD, CARD, 0.05));
+const fOff = new Float32Array(MAXF * 3), fCell = new Float32Array(MAXF).fill(-1), fBirth = new Float32Array(MAXF).fill(-100), fSeed = new Float32Array(MAXF);
+for (let i = 0; i < MAXF; i++) fSeed[i] = hash(i * 7.7);
+cardGeo.setAttribute('aOff', new THREE.InstancedBufferAttribute(fOff, 3));
+cardGeo.setAttribute('aCell', new THREE.InstancedBufferAttribute(fCell, 1));
+cardGeo.setAttribute('aBirth', new THREE.InstancedBufferAttribute(fBirth, 1));
+cardGeo.setAttribute('aSeed', new THREE.InstancedBufferAttribute(fSeed, 1));
+cardGeo.instanceCount = 0;
+// cards face the camera: rotate the box per instance in the vertex shader
+const cardMat = glassMat.clone();
+cardMat.uniforms = { ...uniforms, uAtlas: { value: cardTex }, uPer: { value: PER2 }, uMirror: { value: 0 }, uHover: { value: -1 }, uCam: { value: new THREE.Vector3() }, uFade: { value: 0 } };
+cardMat.vertexShader = glassVert.replace('vec3 p = position + aOff;', `
+  vec3 f = normalize(vec3(uCam.x - aOff.x, 0.0, uCam.z - aOff.z) + 1e-4);
+  vec3 r = normalize(cross(vec3(0.0,1.0,0.0), f));
+  vec3 p = aOff + r * position.x + vec3(0.0,1.0,0.0) * position.y + f * position.z;`)
+  .replace('uniform float uMirror;', 'uniform float uMirror; uniform vec3 uCam;')
+  .replace(`vL = position / ${(S * 0.97).toFixed(3)};`, `vL = position / vec3(${CARD.toFixed(3)}, ${CARD.toFixed(3)}, 0.05);`)
+  .replace('vN = normalize(mat3(modelMatrix) * (normal * vec3(1.0, uMirror > 0.5 ? -1.0 : 1.0, 1.0)));',
+    'vN = normalize(mat3(modelMatrix) * (r * normal.x + vec3(0.0,1.0,0.0) * normal.y + f * normal.z));');
+cardMat.fragmentShader = glassFrag.replace('uniform float uTime,', 'uniform float uFade; uniform float uTime,')
+  .replace('col = mix(col, col * (0.5 + lum)', 'col = mix(col * 0.5, photo * 1.1, 0.8); col = mix(col, col * (0.5 + lum)').replace('0.45), 0.85);', '0.45), 0.0);')
+  .replace(', 2.2).rgb', ', 0.4).rgb')
+  .replace('col += pal(h + 0.33) * fres * 0.45;', 'col += pal(h + 0.33) * (fres * 1.2 + seam * 0.6);')
+  .replace('gl_FragColor = vec4(col, alpha);', 'gl_FragColor = vec4(col * 0.95, (0.8 + seam * 0.2) * uFade);');
+cardMat.depthWrite = false;
+const cards = new THREE.Mesh(cardGeo, cardMat); cards.frustumCulled = false; cards.renderOrder = 5; world.add(cards);
 
 // ---------- pieces ----------
-const paneGeo = new THREE.PlaneGeometry(PANE, PANE), floatGeo = new THREE.PlaneGeometry(1, 1);
-const floating = new THREE.Group(); world.add(floating);
-let maxSlot = -1;
-function addPiece(info, img, born = clock()) {
+const pieces = new Map();   // slot -> { id, slot, t, demo, img }
+const voxelOf = slot => slot % N;
+function drawCell(ctx, c, per, size, img) {
+  const x = (c % per) * size, y = Math.floor(c / per) * size;
+  const iw = img.width || img.videoWidth, ih = img.height || img.videoHeight, k = Math.max(size / iw, size / ih);
+  ctx.save(); ctx.beginPath(); ctx.rect(x, y, size, size); ctx.clip();
+  ctx.drawImage(img, x + (size - iw * k) / 2, y + (size - ih * k) / 2, iw * k, ih * k);
+  ctx.restore();
+}
+function drawToAtlas(slot, img) {
+  const c = slot % (PER * PER);
+  drawCell(actx, c, PER, CELL, img); atlasTex.needsUpdate = true;
+  return c;
+}
+let cardNext = 0;
+const cardOwner = new Array(MAXF).fill(null);
+function addPiece(info, img, born) {
   if (pieces.has(info.slot)) return;
-  const tex = new THREE.CanvasTexture(pieceCanvas(img, info.slot));
-  tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
-  const tint = averageColor(img);
-  const mat = new THREE.ShaderMaterial({ vertexShader: paneVert, fragmentShader: paneFrag, side: THREE.DoubleSide,
-    uniforms: { map: { value: tex }, uLit: { value: born < 0 ? 1 : 0 }, uTime: timeU, uSeed: { value: hash(info.slot) },
-      uHover: { value: 0 }, uOpacity: { value: 1 }, uTint: { value: tint }, uExpo: expoU } });
-  const p = { ...info, tex, tint, mat, born, mesh: new THREE.Mesh(paneGeo, mat) };
-  p.mesh.userData.slot = info.slot;
-  p.glow = new THREE.Sprite(additive(glowTex, tint, 0)); p.glow.scale.setScalar(1.7);
-  const fm = new THREE.ShaderMaterial({ vertexShader: paneVert, fragmentShader: paneFrag, side: THREE.DoubleSide, transparent: true,
-    uniforms: { map: { value: tex }, uLit: { value: 1 }, uTime: timeU, uSeed: { value: hash(info.slot + 5) }, uHover: { value: 0 }, uOpacity: { value: 0 }, uTint: { value: tint }, uExpo: expoU } });
-  p.float = new THREE.Mesh(floatGeo, fm);
-  p.float.userData = { slot: info.slot, ph: hash(info.slot * 3.1) * 6.28, r: hash(info.slot * 1.7), h: hash(info.slot * 2.3), s: 0.42 + hash(info.slot * 4.1) * 0.28 };
-  floating.add(p.float);
-  pieces.set(info.slot, p);
-  maxSlot = Math.max(maxSlot, info.slot);
-  const need = pickDims(pieces.size);
-  if (!dims || capacityOf(need) > capacityOf(dims)) buildHouse(need); else placePiece(p);
-  $('#count').textContent = [...pieces.values()].filter(x => !x.demo).length + demoCount();
+  const cell = drawToAtlas(info.slot, img);
+  pieces.set(info.slot, { ...info, img, cell });
+  const v = voxelOf(info.slot);
+  aCell[v] = cell; aBirth[v] = born;
+  inst.attributes.aCell.needsUpdate = true; inst.attributes.aBirth.needsUpdate = true;
+  // the newest pieces float inside; the oldest card makes room
+  const k = cardNext++ % MAXF;
+  if (cardOwner[k] != null) delete pieces.get(cardOwner[k]).card;
+  cardOwner[k] = info.slot;
+  drawCell(cctx, k, PER2, CELL2, img); cardTex.needsUpdate = true;
+  fCell[k] = k; fBirth[k] = born; cardGeo.instanceCount = Math.max(cardGeo.instanceCount, k + 1);
+  cardGeo.attributes.aCell.needsUpdate = true; cardGeo.attributes.aBirth.needsUpdate = true;
+  pieces.get(info.slot).card = k;
+  $('#count').textContent = pieces.size;
 }
-const demoCount = () => [...pieces.values()].filter(x => x.demo).length;
-function placePiece(p) {
-  const s = slots[p.slot % slots.length]; if (!s) return;
-  houseGroup.add(p.mesh); houseGroup.add(p.glow);
-  orient(p.mesh, s, 0.002);
-  p.glow.position.copy(s.pos).addScaledVector(s.normal, 0.35);
-  if (s.empty) s.empty.visible = false;
-}
-function loadImage(url) {
-  return new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
-}
+function loadImage(url) { return new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; }); }
 async function loadAll() {
   let list = [];
   try { list = await (await fetch('/api/pieces')).json(); } catch { return; }
   const todo = list.filter(p => !pieces.has(p.slot));
   let next = 0;
-  const worker = async () => { while (next < todo.length) { const p = todo[next++]; try { addPiece(p, await loadImage(p.url), -1); } catch {} } };
+  const worker = async () => { while (next < todo.length) { const p = todo[next++]; try { addPiece(p, await loadImage(p.url), -100); } catch {} } };
   await Promise.all(Array.from({ length: 6 }, worker));
 }
-
-// A new piece arrives as a spark from below and lights its pane.
-const sparks = [];
 async function onNewPiece(info) {
   try {
     const img = await loadImage(info.url);
-    addPiece(info, img, clock() + 1.4);
-    const p = pieces.get(info.slot), s = slots[info.slot % slots.length];
-    const spark = new THREE.Sprite(additive(glowTex, 0xffd08a, 1)); spark.scale.setScalar(0.9);
-    const from = new THREE.Vector3((hash(info.slot) - 0.5) * 6, -2, 6), to = s.pos.clone().addScaledVector(s.normal, 0.3);
-    houseGroup.add(spark); sparks.push({ spark, from, to, t0: clock(), p });
-    burstEmbers(to, 40);
-    setCaption(`A new piece of home · ${s.wall}`, 6000);
+    addPiece(info, img, clock() + 0.3);
+    setCaption('A new piece of home just lit up', 6000);
   } catch {}
 }
 
-// ---------- embers: the fire part. Sparks drift up out of the house and fade. ----------
-const EMBERS = 420;
-const emberGeo = new THREE.BufferGeometry();
-const ePos = new Float32Array(EMBERS * 3), eVel = new Float32Array(EMBERS * 3), eLife = new Float32Array(EMBERS), eSize = new Float32Array(EMBERS);
-emberGeo.setAttribute('position', new THREE.BufferAttribute(ePos, 3));
-emberGeo.setAttribute('aLife', new THREE.BufferAttribute(eLife, 1));
-emberGeo.setAttribute('aSize', new THREE.BufferAttribute(eSize, 1));
-const emberMat = new THREE.ShaderMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-  uniforms: { uScale: { value: 1 } },
-  vertexShader: `attribute float aLife, aSize; varying float vLife; uniform float uScale;
-    void main(){ vLife = aLife; vec4 mv = modelViewMatrix*vec4(position,1.0); gl_Position = projectionMatrix*mv;
-      gl_PointSize = aSize * uScale * (0.4 + 0.6*sin(3.1416*clamp(aLife,0.0,1.0))) / -mv.z; }`,
-  fragmentShader: `varying float vLife; void main(){ vec2 d = gl_PointCoord-0.5; float r = length(d); if (r > 0.5) discard;
-    float a = smoothstep(0.5, 0.0, r) * sin(3.1416*clamp(vLife,0.0,1.0));
-    vec3 c = mix(vec3(1.0,0.35,0.08), vec3(1.0,0.85,0.45), clamp(vLife*1.3,0.0,1.0));
-    gl_FragColor = vec4(c*a, a); }` });
-const embers = new THREE.Points(emberGeo, emberMat); embers.frustumCulled = false; world.add(embers);
-function spawnEmber(i, at) {
-  const [W, D, H] = dims || [6, 5, 4];
-  if (at) { ePos[i * 3] = at.x; ePos[i * 3 + 1] = at.y; ePos[i * 3 + 2] = at.z; }
-  else { ePos[i * 3] = (Math.random() - 0.5) * W * 1.1; ePos[i * 3 + 1] = Math.random() * (H + W / 2) * 0.9; ePos[i * 3 + 2] = (Math.random() - 0.5) * D * 1.1; }
-  eVel[i * 3] = (Math.random() - 0.5) * 0.25; eVel[i * 3 + 1] = 0.25 + Math.random() * 0.55; eVel[i * 3 + 2] = (Math.random() - 0.5) * 0.25;
-  eLife[i] = 0; eSize[i] = 14 + Math.random() * 46;
-}
-for (let i = 0; i < EMBERS; i++) { spawnEmber(i); eLife[i] = Math.random(); }
-let emberCursor = 0;
-function burstEmbers(at, n) { for (let k = 0; k < n; k++) { const i = emberCursor++ % EMBERS; spawnEmber(i, at); eVel[i * 3] *= 4; eVel[i * 3 + 2] *= 4; eSize[i] *= 1.4; } }
-function stepEmbers(dt, t) {
-  for (let i = 0; i < EMBERS; i++) {
-    eLife[i] += dt / (3.5 + (i % 7) * 0.6);
-    if (eLife[i] >= 1) { spawnEmber(i); continue; }
-    const k = i * 3;
-    eVel[k] += Math.sin(t * 1.3 + i) * dt * 0.08; eVel[k + 2] += Math.cos(t * 1.1 + i * 0.7) * dt * 0.08;
-    ePos[k] += eVel[k] * dt; ePos[k + 1] += eVel[k + 1] * dt; ePos[k + 2] += eVel[k + 2] * dt;
-  }
-  emberGeo.attributes.position.needsUpdate = true; emberGeo.attributes.aLife.needsUpdate = true; emberGeo.attributes.aSize.needsUpdate = true;
-}
-
-// ---------- view: outside orbit ⇄ inside the house ----------
-const view = { yaw: -0.55, pitch: 0.18, inside: 0, insideT: 0, zoom: 1, vyaw: 0 };
-const center = new THREE.Vector3();
+// ---------- view: outside orbit ⇄ inside through the door ----------
+const view = { yaw: -0.5, pitch: 0.12, inside: 0, insideT: 0, zoom: 1, vyaw: 0, turnHue: 0 };
+const clock0 = performance.now(), clock = () => (performance.now() - clock0) / 1000;
+const center = new THREE.Vector3(0, HOUSE_H * 0.42, 0);
 function frameCamera(dt) {
-  const [W, D, H] = dims || [6, 5, 4];
-  view.inside += (view.insideT - view.inside) * (1 - Math.exp(-dt * 2.4));
+  view.inside += (view.insideT - view.inside) * (1 - Math.exp(-dt * 1.8));
   const e = view.inside, ease = e * e * (3 - 2 * e);
-  center.set(0, (H + W / 2) * 0.45, 0);
-  const fitH = (H + W / 2) * 0.5 + 1.2, fitW = Math.hypot(W, D) * 0.5 + 1.2;
-  const half = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
-  const dist = Math.max(fitH / half, fitW / (half * camera.aspect)) * 1.22 * view.zoom;
-  const pitch = lerp(view.pitch, view.pitch * 0.6, ease);
-  const dir = new THREE.Vector3(Math.sin(view.yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(view.yaw) * Math.cos(pitch));
-  const eye = new THREE.Vector3(0, H * 0.42, 0);
-  camera.position.copy(center).addScaledVector(dir, dist).lerp(eye.clone().addScaledVector(dir, 0.6), ease);
-  const look = center.clone().lerp(eye.clone().addScaledVector(dir, -4), ease);
+  const half = Math.tan(THREE.MathUtils.degToRad(40 / 2));
+  const dist = Math.max((HOUSE_H * 0.5 + 1.5) / half, (Math.hypot(WX, DZ) * S * 0.5 + 1) / (half * camera.aspect)) * 1.45 * view.zoom;
+  const dir = new THREE.Vector3(Math.sin(view.yaw) * Math.cos(view.pitch), Math.sin(view.pitch), Math.cos(view.yaw) * Math.cos(view.pitch));
+  const eye = new THREE.Vector3(0, 1.5, 0);
+  const outPos = center.clone().addScaledVector(dir, dist);
+  const inPos = eye.clone().addScaledVector(dir, 0.15);
+  camera.position.lerpVectors(outPos, inPos, ease);
+  camera.position.y = Math.max(0.25, camera.position.y);
+  const look = center.clone().lerp(eye.clone().addScaledVector(dir, -5).setY(eye.y + view.pitch * -2), ease);
   camera.lookAt(look);
-  camera.fov = lerp(42, 70, ease); camera.updateProjectionMatrix();
-  emberMat.uniforms.uScale.value = innerHeight * renderer.getPixelRatio() / 900 * 6;
-  halo.position.copy(center); halo.scale.setScalar(Math.max(W, H + W / 2) * 4.2);
-  halo.material.opacity = 0.42 * (1 - ease * 0.6);
-  const v = $('#view'); const ins = e > 0.5;
+  camera.fov = lerp(40, 72, ease); camera.updateProjectionMatrix();
+  uniforms.uInside.value = ease;
+  const v = $('#view'), ins = e > 0.5;
   if (v.classList.contains('inside') !== ins) { v.classList.toggle('inside', ins); v.textContent = ins ? 'Inside the house' : 'Outside view'; }
   return ease;
 }
 
-// ---------- frame loop ----------
+// ---------- frame ----------
 const ray = new THREE.Raycaster();
-let hover = null, lastFrame = performance.now();
-const outline = new THREE.Mesh(new THREE.PlaneGeometry(PANE * 1.18, PANE * 1.18),
-  new THREE.MeshBasicMaterial({ map: outlineTex, transparent: true, depthWrite: false, depthTest: false, side: THREE.DoubleSide }));
-outline.renderOrder = 10; outline.visible = false; world.add(outline);
+let hover = null, lastFrame = performance.now(), lastYaw = view.yaw;
 function frame(now) {
   const dt = Math.min(0.05, (now - lastFrame) / 1000); lastFrame = now;
-  const t = clock(); timeU.value = t;
+  const t = clock(); uniforms.uTime.value = t;
   if (!dragging) { view.yaw += view.vyaw * dt; view.vyaw *= Math.exp(-dt * 2.5); }
+  // turning the house moves the light: the hue follows how far it has turned
+  view.turnHue += (view.yaw - lastYaw) * 0.35 + (view.pitch - (frame.lp ?? view.pitch)) * 0.25; lastYaw = view.yaw; frame.lp = view.pitch;
+  uniforms.uTurn.value = view.turnHue;
   const ease = frameCamera(dt);
-  // panes: light up after birth, flicker glow
-  for (const p of pieces.values()) {
-    const lit = clamp((t - p.born) / 1.2, 0, 1); p.mat.uniforms.uLit.value = lit;
-    p.mat.uniforms.uHover.value += ((hover && hover.slot === p.slot ? 1 : 0) - p.mat.uniforms.uHover.value) * 0.2;
-    p.glow.material.opacity = lit * (0.22 + 0.07 * Math.sin(t * 5 + p.slot)) * (1 - ease * 0.9);
-    const f = p.float, u = f.userData, [W, D, H] = dims;
-    const a = u.ph + t * (0.05 + u.r * 0.05);
-    const ring = 0.55 + u.r * 0.35;   // keep the floating photos away from the camera in the middle
-    f.position.set(Math.cos(a) * ring * (W / 2 - 0.4), 0.5 + u.h * (H - 0.8) + Math.sin(t * 0.6 + u.ph) * 0.15, Math.sin(a) * ring * (D / 2 - 0.4));
-    f.scale.setScalar(u.s); f.lookAt(world.worldToLocal(camera.position.clone()));
-    f.material.uniforms.uOpacity.value = clamp((ease - 0.35) / 0.5, 0, 1) * 0.95;
-    f.material.uniforms.uHover.value = hover && hover.float === f ? 0.8 : 0;
-    f.visible = f.material.uniforms.uOpacity.value > 0.01;
+  dustMat.uniforms.uScale.value = innerHeight * renderer.getPixelRatio() / 900 * 18;
+  // floating cards drift slowly around you inside
+  const n = cardGeo.instanceCount;
+  for (let i = 0; i < n; i++) {
+    const s = fSeed[i], a = i * 2.39996 + t * 0.03, ring = 2.3 + (i % 3) * 0.3;
+    fOff[i * 3] = Math.cos(a) * ring * 1.1; fOff[i * 3 + 1] = 0.9 + ((i * 3) % 5) * 0.62 + Math.sin(t * 0.5 + s * 9) * 0.1; fOff[i * 3 + 2] = Math.sin(a) * ring * 0.8;
   }
-  for (let i = sparks.length - 1; i >= 0; i--) {
-    const s = sparks[i], k = clamp((t - s.t0) / 1.4, 0, 1), e = 1 - Math.pow(1 - k, 3);
-    s.spark.position.lerpVectors(s.from, s.to, e); s.spark.position.y += Math.sin(k * Math.PI) * 2;
-    s.spark.scale.setScalar(0.5 + Math.sin(k * Math.PI) * 0.8 + (k > 0.95 ? 2 : 0));
-    if (k >= 1) { houseGroup.remove(s.spark); sparks.splice(i, 1); burstEmbers(s.to, 60); }
-  }
-  stepEmbers(dt, t);
-  expoU.value = 1 - ease * 0.3; emptyMat.opacity = 1 - ease * 0.65;
-  houseGroup && houseGroup.children.forEach(c => { if (c.userData.core) c.material.opacity = (0.5 + 0.06 * Math.sin(t * 2.3) + 0.04 * Math.sin(t * 7.1)) * (1 - ease * 0.92); });
-  if (edges) edges.material.opacity = 0.45 + 0.1 * Math.sin(t * 1.7);
-  world.rotation.y = 0;
+  cardGeo.attributes.aOff.needsUpdate = true;
+  cardMat.uniforms.uCam.value.copy(camera.position);
+  cardMat.uniforms.uFade.value = clamp((ease - 0.45) / 0.45, 0, 1);
+  cards.visible = cardMat.uniforms.uFade.value > 0.01;
+  compMat.uniforms.uBloom.value = lerp(1.15, 0.8, ease);
   updateHover();
-  renderer.render(scene, camera);
+  renderFrame(t);
   drawHands(now);
-  if (!$('#debug').hidden) $('#debug').textContent = `${pieces.size} pieces · house ${dims.join('×')} · ${slots.length} spots · ${renderer.info.render.calls} draws`;
+  if (!$('#debug').hidden) $('#debug').textContent = `${pieces.size} pieces · ${N} glass cubes · ${renderer.info.render.calls} draws`;
   requestAnimationFrame(frame);
 }
 
-// ---------- picking a spot ----------
+// ---------- picking ----------
 let pointerNdc = null, pointerSource = 'mouse', dwell = { key: null, t: 0 };
+const pickBoxes = new THREE.InstancedMesh(boxGeo, new THREE.MeshBasicMaterial(), N);
+{ const m = new THREE.Matrix4(); voxels.forEach((v, i) => { m.makeTranslation(v.pos.x, v.pos.y, v.pos.z); pickBoxes.setMatrixAt(i, m); }); }
+const pickCards = new THREE.InstancedMesh(new THREE.BoxGeometry(CARD, CARD, 0.05), new THREE.MeshBasicMaterial(), MAXF);
+const outline = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(S * 1.04, S * 1.04, S * 1.04)),
+  new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, depthTest: false }));
+outline.visible = false; outline.renderOrder = 9; world.add(outline);
 function updateHover() {
-  if (!pointerNdc || !houseGroup) { setHover(null); return; }
+  if (!pointerNdc) { setHover(null); return; }
   ray.setFromCamera(pointerNdc, camera);
-  const targets = [];
-  for (const p of pieces.values()) { targets.push(p.mesh); if (p.float.visible) targets.push(p.float); }
-  for (const s of slots) if (s.empty && s.empty.visible) targets.push(s.empty);
-  const hit = ray.intersectObjects(targets, false)[0];
-  if (!hit) { setHover(null); return; }
-  const slot = hit.object.userData.slot;
-  setHover({ slot, float: hit.object === pieces.get(slot)?.float ? hit.object : null, piece: pieces.get(slot) || null });
+  if (cards.visible) {
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion();
+    for (let i = 0; i < cardGeo.instanceCount; i++) {
+      const p = new THREE.Vector3(fOff[i * 3], fOff[i * 3 + 1], fOff[i * 3 + 2]);
+      q.setFromRotationMatrix(new THREE.Matrix4().lookAt(camera.position.clone().setY(p.y), p, new THREE.Vector3(0, 1, 0)));
+      pickCards.setMatrixAt(i, m.compose(p, q, new THREE.Vector3(1, 1, 1)));
+    }
+    pickCards.count = cardGeo.instanceCount; pickCards.instanceMatrix.needsUpdate = true; pickCards.computeBoundingSphere();
+    const hc = ray.intersectObject(pickCards)[0];
+    if (hc) { const slot = [...pieces.values()].find(p => p.card === hc.instanceId)?.slot; if (slot != null) { setHover({ slot, card: hc.instanceId }); return; } }
+  }
+  pickBoxes.computeBoundingSphere();
+  const hits = ray.intersectObject(pickBoxes);
+  // from inside, skip the cube you are standing next to; take the first one in front
+  const h = hits[0];
+  if (!h) { setHover(null); return; }
+  const v = h.instanceId, slot = [...pieces.keys()].find(s => voxelOf(s) === v);
+  setHover({ voxel: v, slot: slot ?? null });
 }
 function setHover(h) {
-  const key = h ? (h.float ? 'f' : 's') + h.slot : null;
+  const key = h ? (h.card != null ? 'c' + h.card : 'v' + h.voxel) : null;
   if (key !== (hover && hover.key)) { hover = h ? { ...h, key } : null; dwell = { key, t: performance.now() }; }
-  if (!hover) { outline.visible = false; $('#qrbox').classList.remove('call'); if (!captionHold) setCaption(''); return; }
-  const s = slots[hover.slot % slots.length];
-  outline.visible = !hover.float;
-  if (s) orient(outline, s, 0.02);
-  if (hover.piece) setCaption(`Piece ${hover.slot + 1} · ${s ? s.wall : 'floating'} · ${hover.piece.demo ? 'test piece' : timeAgo(hover.piece.t)}`);
-  else setCaption(`Empty spot · ${s.wall} · scan the code to add yours`);
-  $('#qrbox').classList.toggle('call', !hover.piece);
-  // pointing at a piece for a moment opens it big
-  if (pointerSource === 'hand' && hover.piece && performance.now() - dwell.t > 900 && $('#focus').hidden) openFocus(hover.piece);
+  uniforms.uHover.value = hover && hover.voxel != null ? hover.voxel : -1;
+  cardMat.uniforms.uHover.value = hover && hover.card != null ? hover.card : -1;
+  if (!hover) { outline.visible = false; $('#qrbox').classList.remove('call'); setCaption(''); return; }
+  if (hover.voxel != null) { outline.visible = true; outline.position.copy(voxels[hover.voxel].pos); } else outline.visible = false;
+  const p = hover.slot != null ? pieces.get(hover.slot) : null;
+  if (p) setCaption(`Piece ${p.slot + 1} · ${p.demo ? 'test piece' : timeAgo(p.t)}`);
+  else setCaption('An empty spot · scan the code to light it up');
+  $('#qrbox').classList.toggle('call', !p);
+  if (pointerSource === 'hand' && p && performance.now() - dwell.t > 900 && $('#focus').hidden) openFocus(p);
 }
 function timeAgo(t) {
   if (!t) return 'added by a visitor';
@@ -423,9 +435,10 @@ function setCaption(s, holdMs = 0) {
   const el = $('#caption'); if (el.textContent !== s) el.textContent = s;
 }
 function openFocus(p) {
-  const c = $('#focus canvas'), x = c.getContext('2d');
-  x.clearRect(0, 0, 512, 512); x.drawImage(p.tex.image, 0, 0, 512, 512);
-  $('#focusText').textContent = `Piece ${p.slot + 1} · ${slots[p.slot % slots.length]?.wall || ''}`;
+  const c = $('#focus canvas'), x = c.getContext('2d'), img = p.img;
+  const iw = img.width || img.videoWidth, ih = img.height || img.videoHeight, k = Math.max(512 / iw, 512 / ih);
+  x.clearRect(0, 0, 512, 512); x.drawImage(img, (512 - iw * k) / 2, (512 - ih * k) / 2, iw * k, ih * k);
+  $('#focusText').textContent = `Piece ${p.slot + 1}`;
   $('#focus').hidden = false;
   clearTimeout(openFocus.t); openFocus.t = setTimeout(closeFocus, 6000);
 }
@@ -440,44 +453,44 @@ canvas.addEventListener('pointermove', e => {
   pointerNdc = new THREE.Vector2(e.clientX / innerWidth * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
   if (!drag) return;
   const dx = e.clientX - drag.x, dy = e.clientY - drag.y; drag.x = e.clientX; drag.y = e.clientY; drag.moved += Math.abs(dx) + Math.abs(dy);
-  turn(dx / innerWidth * 4, dy / innerHeight * 2.4);
-  view.vyaw = dx / innerWidth * 4 * 30;
+  turn(dx / innerWidth * 4, dy / innerHeight * 2.2);
+  view.vyaw = -dx / innerWidth * 4 * 30;
 });
-canvas.addEventListener('pointerup', () => { if (drag && drag.moved < 6 && hover && hover.piece) openFocus(hover.piece); drag = null; dragging = false; });
+canvas.addEventListener('pointerup', () => { if (drag && drag.moved < 6 && hover && hover.slot != null) openFocus(pieces.get(hover.slot)); drag = null; dragging = false; });
 canvas.addEventListener('pointerleave', () => { pointerNdc = null; });
 canvas.addEventListener('wheel', e => { e.preventDefault();
   if (view.insideT > 0.5) { if (e.deltaY > 0) view.insideT = 0; }
-  else { view.zoom = clamp(view.zoom * Math.exp(e.deltaY * 0.0012), 0.45, 1.8); if (view.zoom < 0.5 && e.deltaY < 0) { view.insideT = 1; view.zoom = 1; } }
+  else { view.zoom = clamp(view.zoom * Math.exp(e.deltaY * 0.0012), 0.5, 1.8); if (view.zoom < 0.55 && e.deltaY < 0) { view.insideT = 1; view.zoom = 1; } }
 }, { passive: false });
 canvas.addEventListener('dblclick', () => { view.insideT = view.insideT > 0.5 ? 0 : 1; });
 function turn(dyaw, dpitch) {
   view.yaw -= dyaw;
-  view.pitch = clamp(view.pitch + dpitch * (view.inside > 0.5 ? -1 : 1), -0.35, 1.0);
+  view.pitch = clamp(view.pitch + dpitch * (view.inside > 0.5 ? -0.6 : 1), -0.05, 0.9);
 }
 addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
   if (k === 'f') document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
   else if (k === 'i' || k === ' ') { e.preventDefault(); view.insideT = view.insideT > 0.5 ? 0 : 1; }
-  else if (k === 'r') { view.yaw = -0.55; view.pitch = 0.18; view.zoom = 1; view.insideT = 0; }
+  else if (k === 'r') { view.yaw = -0.5; view.pitch = 0.12; view.zoom = 1; view.insideT = 0; }
   else if (k === 'd') $('#debug').hidden = !$('#debug').hidden;
   else if (k === 'c') $('#cambubble').hidden = !$('#cambubble').hidden;
   else if (k === 'h') $('#guide').hidden = !$('#guide').hidden;
-  else if (k === 'x') addDemoPieces(e.shiftKey ? 200 : 40);
+  else if (k === 'x') addDemoPieces(e.shiftKey ? 300 : 60);
   else if (k === 'escape') closeFocus();
 });
 
 // ---------- hands ----------
-// ✊ grab and move: turn the house (inside: look around).
-// 🙌 two hands: move them apart to step in, together to step out.
-// ☝️ point: a spot lights up under your finger. Hold on a piece to open it.
-let tracks = [], prev = new Map(), active = null, hint = '', handStats = null, stepStart = null;
+// ✊ grab and move: turn the house (inside: look around); the light shifts as it turns.
+// 🙌 two hands: apart to step in through the door, together to step out.
+// ☝️ point: the cube under your finger lights up; hold on a piece to open it.
+let tracks = [], prev = new Map(), active = null, hint = '', stepStart = null;
 const M = 0.1;
 const toScreen = t => ({ x: clamp(((1 - t.x) - M) / (1 - 2 * M), 0, 1), y: clamp((t.y - M) / (1 - 2 * M), 0, 1) });
 async function initHands() {
   if (!CONFIG.gestures) { $('#guide').classList.add('nohands'); return; }
   try {
     const { startHands, G } = await import('./hands.js');
-    handStats = await startHands($('#cam'), (tr, now) => onHands(tr, now, G));
+    await startHands($('#cam'), (tr, now) => onHands(tr, now, G));
     $('#cambubble').hidden = false;
   } catch (err) { console.warn('Hand tracking off:', err); }
 }
@@ -492,10 +505,10 @@ function onHands(tr, now, G) {
   if (two.length === 2 && !two.some(isPoint)) {
     mode = 'step';
     const [a, b] = two.map(t => next.get(t.id)), d = Math.hypot(a.x - b.x, a.y - b.y);
-    if (!stepStart) stepStart = { d, inside: view.insideT };
+    if (!stepStart) stepStart = { d };
     const ch = (d - stepStart.d) / 0.25;
-    if (ch > 1 && view.insideT < 0.5) { view.insideT = 1; stepStart = { d, inside: 1 }; }
-    else if (ch < -1 && view.insideT > 0.5) { view.insideT = 0; stepStart = { d, inside: 0 }; }
+    if (ch > 1 && view.insideT < 0.5) { view.insideT = 1; stepStart = { d }; }
+    else if (ch < -1 && view.insideT > 0.5) { view.insideT = 0; stepStart = { d }; }
     hint = view.insideT > 0.5 ? 'bring hands together to step out' : 'move hands apart to step in';
   } else {
     stepStart = null;
@@ -509,7 +522,7 @@ function onHands(tr, now, G) {
       mode = 'point'; hint = 'hold on a piece to open it';
       const c = next.get(t.id); pointerSource = 'hand';
       pointerNdc = new THREE.Vector2(c.x * 2 - 1, -(c.y * 2 - 1));
-    } else if (t) { hint = '✊ grab to turn · ☝️ point to pick'; }
+    } else if (t) hint = '✊ grab to turn · ☝️ point to pick';
   }
   if (mode !== 'point' && pointerSource === 'hand') pointerNdc = null;
   prev = next;
@@ -527,17 +540,12 @@ function drawHands(now) {
     for (let i = 0; i < n; i++) {
       const a = i / n * Math.PI * 2 + spin * (fist ? 2.4 : 0.7);
       hctx.beginPath(); hctx.arc(x + Math.cos(a) * r, y + Math.sin(a) * r, (fist ? 3.2 : 2.6) * dpr, 0, 7);
-      hctx.fillStyle = fist ? 'rgba(255,170,90,0.95)' : 'rgba(255,230,190,0.9)'; hctx.fill();
-    }
-    if (fist || point) {
-      const g = hctx.createRadialGradient(x, y, 0, x, y, r * 2.2);
-      g.addColorStop(0, 'rgba(255,150,60,0.55)'); g.addColorStop(1, 'rgba(255,150,60,0)');
-      hctx.fillStyle = g; hctx.beginPath(); hctx.arc(x, y, r * 2.2, 0, 7); hctx.fill();
+      hctx.fillStyle = `hsla(${(spin * 40 + i * 25) % 360}, 90%, 80%, 0.95)`; hctx.fill();
     }
   }
   if (active === 'step' && pts.length >= 2) {
     const [a, b] = pts, n = Math.max(6, Math.round(Math.hypot(b.x - a.x, b.y - a.y) / (14 * dpr)));
-    hctx.fillStyle = 'rgba(255,220,170,0.6)';
+    hctx.fillStyle = 'rgba(255,220,235,0.6)';
     for (let i = 1; i < n; i++) { hctx.beginPath(); hctx.arc(a.x + (b.x - a.x) * i / n, a.y + (b.y - a.y) * i / n, 2 * dpr, 0, 7); hctx.fill(); }
   }
   if (hint) {
@@ -545,9 +553,9 @@ function drawHands(now) {
     hctx.font = `500 ${fs}px Inter, system-ui, sans-serif`;
     const w = hctx.measureText(hint).width + fs * 1.4, h = fs * 2;
     const bx = clamp(top.x - w / 2, 8 * dpr, W - w - 8 * dpr), by = Math.min(H - h - 8 * dpr, top.y + 48 * dpr);
-    hctx.fillStyle = 'rgba(40,18,6,0.75)'; hctx.beginPath(); hctx.roundRect(bx, by, w, h, h / 2); hctx.fill();
-    hctx.strokeStyle = 'rgba(255,200,140,0.3)'; hctx.lineWidth = dpr; hctx.stroke();
-    hctx.fillStyle = '#f8e6cc'; hctx.textBaseline = 'middle'; hctx.textAlign = 'center'; hctx.fillText(hint, bx + w / 2, by + h / 2);
+    hctx.fillStyle = 'rgba(30,14,22,0.72)'; hctx.beginPath(); hctx.roundRect(bx, by, w, h, h / 2); hctx.fill();
+    hctx.strokeStyle = 'rgba(255,190,220,0.3)'; hctx.lineWidth = dpr; hctx.stroke();
+    hctx.fillStyle = '#fbe9f0'; hctx.textBaseline = 'middle'; hctx.textAlign = 'center'; hctx.fillText(hint, bx + w / 2, by + h / 2);
   }
 }
 
@@ -565,26 +573,26 @@ function setPhoneUrl(url) {
   $('#qr').src = '/api/qr.svg?u=' + encodeURIComponent(url);
 }
 
-// ---------- test pieces (X / Shift+X): warm little scenes, not saved ----------
+// ---------- test pieces (X / Shift+X) ----------
 const DEMO = ['🏠', '🍜', '🌻', '🐈', '🎧', '🚲', '☕️', '📚', '🌧️', '🧸', '🪴', '🍕', '🎸', '🌙', '🧦', '🫖', '🕯️', '🍞'];
 function addDemoPieces(n) {
+  const t = clock();
   for (let i = 0; i < n; i++) {
-    const c = document.createElement('canvas'); c.width = c.height = 256;
-    const x = c.getContext('2d'), hue = 10 + Math.random() * 50 + (Math.random() < 0.3 ? 140 : 0);
-    const g = x.createLinearGradient(0, 0, 256, 256);
-    g.addColorStop(0, `hsl(${hue},70%,62%)`); g.addColorStop(1, `hsl(${(hue + 40) % 360},60%,35%)`);
-    x.fillStyle = g; x.fillRect(0, 0, 256, 256);
-    x.font = '110px serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(DEMO[(Math.random() * DEMO.length) | 0], 128, 136);
+    const c = document.createElement('canvas'); c.width = c.height = 128;
+    const x = c.getContext('2d'), hue = [350, 15, 30, 280, 220, 330][(Math.random() * 6) | 0] + Math.random() * 20;
+    const g = x.createLinearGradient(0, 0, 128, 128);
+    g.addColorStop(0, `hsl(${hue},80%,65%)`); g.addColorStop(1, `hsl(${(hue + 40) % 360},70%,40%)`);
+    x.fillStyle = g; x.fillRect(0, 0, 128, 128);
+    x.font = '64px serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(DEMO[(Math.random() * DEMO.length) | 0], 64, 68);
     let slot = 0; while (pieces.has(slot)) slot++;
-    addPiece({ id: 'demo' + slot, slot, demo: true }, c, clock() + i * 0.02);
+    addPiece({ id: 'demo' + slot, slot, demo: true }, c, t + i * 0.015);
   }
 }
 
 // ---------- start ----------
-buildHouse(pickDims(0));
 fetch('/api/info').then(r => r.json()).then(i => setPhoneUrl(i.phoneUrl)).catch(() => {});
 await loadAll();
 connect();
 requestAnimationFrame(frame);
 initHands();
-window.house = { view, pieces, addDemoPieces, onHands: (...a) => onHands(...a), openFocus, slots: () => slots };
+window.house = { view, pieces, addDemoPieces, onHands: (...a) => onHands(...a), openFocus, count: N };
