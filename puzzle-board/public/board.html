@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Piece of Home · Board</title>
+  <link rel="stylesheet" href="css/glass.css">
+  <link rel="stylesheet" href="css/board.css">
+</head>
+<body>
+  <div class="void" aria-hidden="true"></div>
+  <canvas id="gl"></canvas>
+  <canvas id="hands"></canvas>
+
+  <header class="title">
+    <p class="label">Piece of Home</p>
+    <h1 id="question"></h1>
+  </header>
+
+  <aside class="qr">
+    <img id="qr" alt="QR code to add your piece" src="/api/qr.svg">
+    <div>
+      <b id="hint"></b>
+      <span class="url" id="url"></span>
+    </div>
+  </aside>
+
+  <div class="counter">
+    <div class="big"><span id="count">0</span></div>
+    <div class="label">pieces of home · <span id="layout"></span></div>
+  </div>
+
+  <nav class="gestures" id="gestures">
+    <div class="card amber dim g" data-g="grab">
+      <div class="icon">✊</div>
+      <div><b>Grab</b><span>fist + move = turn it any way · open to let go</span></div>
+    </div>
+    <div class="card pink dim g" data-g="zoom">
+      <div class="icon two">✊✊</div>
+      <div><b>Two fists</b><span>pull apart to come closer · twist to turn</span></div>
+    </div>
+    <div class="card blue dim g" data-g="swirl">
+      <div class="icon">☝️</div>
+      <div><b>Finger circles</b><span>swirl it round like a whirlpool</span></div>
+    </div>
+    <div class="card teal dim g" data-g="shape">
+      <div class="icon">👐</div>
+      <div><b>Two palms</b><span>together = sphere · apart = wall</span></div>
+    </div>
+  </nav>
+  <p class="mouse">no camera? drag · scroll · L switch · F fullscreen</p>
+
+  <div class="card cambubble" id="cambubble" hidden><video id="cam" playsinline muted></video></div>
+
+  <div class="newpiece" id="newpiece">
+    <canvas></canvas>
+    <p class="card pink pill">A new piece of home</p>
+  </div>
+
+  <div class="card pill offline" id="offline" hidden>Reconnecting to the server…</div>
+  <div class="debug" id="debug" hidden></div>
+
+  <script type="module" src="js/board.js"></script>
+</body>
+</html>

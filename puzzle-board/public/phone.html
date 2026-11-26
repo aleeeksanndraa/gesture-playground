@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#000000">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <title>Piece of Home</title>
+  <link rel="stylesheet" href="css/glass.css">
+  <link rel="stylesheet" href="css/phone.css">
+</head>
+<body>
+  <!-- 1. Your piece -->
+  <main class="screen" id="intro">
+    <p class="label top-label">Piece of Home</p>
+    <div class="orbit">
+      <canvas class="ring" id="introRing"></canvas>
+      <canvas class="piece float" id="introPiece" width="600" height="600"></canvas>
+    </div>
+    <div class="headline">
+      <h1 id="question"></h1>
+      <p class="label"><span id="already">Your piece</span></p>
+    </div>
+    <div class="choices">
+      <label class="card blue choice">
+        <input type="file" accept="image/*" id="photoIn" hidden>
+        <span class="emoji">📷</span>
+        <span class="big">Photo</span>
+        <span class="label">take or pick one</span>
+      </label>
+      <button class="card amber choice" id="justDraw">
+        <span class="emoji">✏️</span>
+        <span class="big">Draw</span>
+        <span class="label">start empty</span>
+      </button>
+    </div>
+  </main>
+
+  <!-- 2. Make it -->
+  <main class="screen" id="editor" hidden>
+    <header class="bar">
+      <button class="back" id="back" aria-label="Back">‹ Back</button>
+      <button class="send" id="send">Send</button>
+    </header>
+
+    <div class="stage-wrap"><canvas id="stage"></canvas></div>
+
+    <div class="modes" role="tablist">
+      <button class="card blue dim mode" data-mode="move" role="tab"><span>✋</span>Move</button>
+      <button class="card amber dim mode" data-mode="draw" role="tab"><span>✏️</span>Draw</button>
+      <button class="card pink dim mode" data-mode="stickers" role="tab"><span>✨</span>Stickers</button>
+    </div>
+    <section class="card tools" id="tools">
+      <div class="panel" data-panel="move">
+        <p class="label">Drag with one finger. Pinch to zoom and turn.</p>
+        <label class="chip"><input type="file" accept="image/*" id="photoIn2" hidden>📷 Change photo</label>
+      </div>
+      <div class="panel" data-panel="draw">
+        <div class="colors" id="colors"></div>
+        <div class="row">
+          <div class="sizes" id="sizes"></div>
+          <button class="chip" id="undo">↶ Undo</button>
+        </div>
+      </div>
+      <div class="panel" data-panel="stickers">
+        <div class="stickers" id="stickers"></div>
+      </div>
+    </section>
+  </main>
+
+  <!-- 3. Sent -->
+  <main class="screen" id="sent" hidden>
+    <p class="label top-label">Sent</p>
+    <div class="orbit">
+      <canvas class="ring" id="sentRing"></canvas>
+      <canvas class="piece" id="sentPiece" width="600" height="600"></canvas>
+    </div>
+    <div class="headline">
+      <h1>It's on the board</h1>
+      <p class="label">Look up. Your piece just joined the puzzle.</p>
+    </div>
+    <div class="choices one"><button class="card pink choice" id="again"><span class="emoji">✨</span><span class="big">Another</span><span class="label">make one more piece</span></button></div>
+  </main>
+
+  <div class="toast card pill" id="toast" hidden></div>
+  <script type="module" src="js/phone.js"></script>
+</body>
+</html>
