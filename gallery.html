@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Doodle Away Gallery</title>
+<link rel="stylesheet" href="css/style.css">
+<style>
+  .wrap { max-width: 1240px; margin: 0 auto; padding: 28px 16px 80px; }
+  header { text-align: center; margin-bottom: 36px; }
+  header h1 { font-family: var(--title); font-size: clamp(48px, 9vw, 88px); margin: 0; line-height: 1; }
+  header h1 span { display: inline-block; transform: rotate(var(--r, 0deg)); }
+  header p { font-size: 22px; color: var(--muted); margin: 6px 0 0; }
+  .live { font-size: 18px; color: var(--teal); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 40px 28px; }
+  .card {
+    all: unset; cursor: pointer; display: block; position: relative; background: #fff; padding: 10px 10px 6px;
+    box-shadow: 2px 4px 12px rgba(0, 0, 0, .1); transform: rotate(var(--r, 0deg)); transition: transform .2s;
+  }
+  .card::before { /* washi tape */
+    content: ''; position: absolute; left: 50%; top: -12px; width: 76px; height: 22px; transform: translateX(-50%) rotate(var(--tr, -3deg));
+    background: var(--tape, rgba(232, 96, 122, .45));
+  }
+  .card:hover, .card:focus-visible { transform: rotate(0deg) scale(1.03); z-index: 1; }
+  .card:focus-visible { outline: 2.5px dashed var(--ink); outline-offset: 4px; }
+  .card img { display: block; width: 100%; aspect-ratio: 4/3; object-fit: contain; background: var(--paper); }
+  .card .meta { text-align: center; font-size: 18px; color: var(--muted); padding-top: 4px; }
+  .card.new { animation: drop .7s ease; }
+  @keyframes drop { from { transform: translateY(-30px) rotate(8deg); opacity: 0; } }
+  .empty { text-align: center; font-size: 24px; color: var(--muted); padding: 40px 0; }
+  dialog { border: 0; padding: 0; background: transparent; max-width: min(1100px, 94vw); width: 100%; color: var(--ink); }
+  dialog::backdrop { background: rgba(60, 50, 40, .45); }
+  .viewer { background: #fff; padding: 14px; box-shadow: 4px 8px 30px rgba(0, 0, 0, .2); }
+  #replay { display: grid; place-items: center; background: var(--paper); }
+  #replay canvas { max-width: 100%; max-height: 70vh; height: auto !important; width: auto !important; }
+  .bar { display: flex; gap: 12px; padding-top: 12px; align-items: center; flex-wrap: wrap; }
+  .bar .grow { flex: 1; color: var(--muted); font-size: 20px; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1 id="title" aria-label="Doodle Away gallery"></h1>
+      <p>Everything drawn on the wall, newest first. Tap one to watch it being drawn.</p>
+      <p class="live" id="count">loading…</p>
+    </header>
+    <div id="grid" class="grid"></div>
+  </div>
+
+  <dialog id="dlg">
+    <div class="viewer">
+      <div id="replay"></div>
+      <div class="bar">
+        <span class="grow" id="info"></span>
+        <button class="btn" id="again">↻ replay</button>
+        <a class="btn" id="dl" download>download</a>
+        <button class="btn" id="close">close</button>
+      </div>
+    </div>
+  </dialog>
+
+  <script src="vendor/p5.min.js"></script>
+  <script type="module">
+    import { store } from './js/store.js';
+    import { drawSegment } from './js/render.js';
+
+    const colors = ['#e8607a', '#d9463b', '#2a8c95', '#e8607a', '#5aa85f', '#d9463b', '#7b63c6', '#2a8c95'];
+    document.getElementById('title').innerHTML = [...'Doodle Away gallery'].map((ch, i) =>
+      ch === ' ' ? ' ' : `<span style="color:${colors[i % colors.length]};--r:${((i * 37) % 9) - 4}deg">${ch}</span>`).join('');
+
+    const tapes = ['rgba(232,96,122,.45)', 'rgba(42,140,149,.35)', 'rgba(242,182,48,.5)', 'rgba(123,99,198,.35)', 'rgba(90,168,95,.4)'];
+    const grid = document.getElementById('grid');
+    const fmt = t => new Date(t).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    const known = new Set();
+    const hash = s => [...s].reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7);
+
+    async function load() {
+      const items = await store.list();
+      document.getElementById('count').textContent = `● live · ${items.length} doodle${items.length === 1 ? '' : 's'}`;
+      if (!items.length) { grid.innerHTML = '<p class="empty">No doodles yet. Go make the first one on the wall!</p>'; return; }
+      grid.querySelector('.empty')?.remove();
+      const first = known.size === 0;
+      items.slice().reverse().forEach(d => {
+        if (known.has(d.id)) return;
+        known.add(d.id);
+        const h = hash(d.id);
+        const b = document.createElement('button');
+        b.className = 'card' + (first ? '' : ' new');
+        b.style.setProperty('--r', `${(h % 7) - 3}deg`);
+        b.style.setProperty('--tr', `${(h % 9) - 4}deg`);
+        b.style.setProperty('--tape', tapes[h % tapes.length]);
+        b.innerHTML = `<img alt="Doodle from ${fmt(d.createdAt)}" loading="lazy"><div class="meta">${fmt(d.createdAt)}</div>`;
+        b.querySelector('img').src = d.png;
+        b.onclick = () => open(d.id);
+        grid.prepend(b);
+      });
+    }
+
+    let sketch;
+    async function open(id) {
+      const d = await store.get(id);
+      if (!d) return;
+      document.getElementById('info').textContent = fmt(d.createdAt);
+      const dl = document.getElementById('dl'); dl.href = d.png; dl.download = `doodle-${d.id}.png`;
+      document.getElementById('dlg').showModal();
+      sketch?.remove();
+      sketch = new p5(p => {
+        let events, i, ink, k;
+        const reset = () => {
+          events = [];
+          for (const s of d.strokes || []) s.pts.forEach((pt, j) => events.push({ s, j, t: pt[3] }));
+          events.sort((a, b) => a.t - b.t);
+          let tt = 0, prev = events[0]?.t ?? 0;
+          for (const e of events) { tt += Math.min(e.t - prev, 250); prev = e.t; e.rt = tt; }
+          k = tt > 8000 ? 8000 / tt : 1;
+          i = 0; p.start = p.millis();
+          ink.clear();
+        };
+        p.setup = () => {
+          const scale = Math.min(1, 1600 / Math.max(d.width, d.height));
+          p.createCanvas(Math.ceil(d.width * scale), Math.ceil(d.height * scale)).parent('replay');
+          p.pixelDensity(1);
+          ink = p.createGraphics(p.width, p.height); ink.pixelDensity(1); ink.scale(scale); ink.strokeCap(p.ROUND);
+          reset();
+          document.getElementById('again').onclick = reset;
+        };
+        p.draw = () => {
+          const t = (p.millis() - p.start) / k;
+          while (i < events.length && events[i].rt <= t) {
+            const { s, j } = events[i];
+            drawSegment(ink, s, s.pts[Math.max(0, j - 1)], s.pts[j], 0, 0, j);
+            i++;
+          }
+          p.background('#fbf8f1'); p.image(ink, 0, 0);
+        };
+      });
+    }
+    const dlg = document.getElementById('dlg');
+    document.getElementById('close').onclick = () => dlg.close();
+    dlg.addEventListener('close', () => { sketch?.remove(); sketch = null; });
+
+    load();
+    store.subscribe(() => load());
+  </script>
+</body>
+</html>
