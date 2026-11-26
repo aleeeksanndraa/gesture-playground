@@ -179,7 +179,7 @@ const pieceGeo = puzzleGeometry(P * 0.9, 0.035);
 function makeInstanced(base, n) {
   const g = new THREE.InstancedBufferGeometry().copy(base);
   const at = (name, size) => { const a = new Float32Array(n * size); g.setAttribute(name, new THREE.InstancedBufferAttribute(a, size)); return a; };
-  return { g, off: at('aOff', 3), quat: at('aQuat', 4), cell: at('aCell', 1).fill(-1), birth: at('aBirth', 1).fill(-100), seed: at('aSeed', 1), loose: at('aLoose', 1) };
+  return { g, off: at('aOff', 3), quat: at('aQuat', 4), cell: at('aCell', 1).fill(-1), birth: at('aBirth', 1).fill(-100), seed: at('aSeed', 1), loose: at('aLoose', 1), fade: at('aFade', 1).fill(1) };
 }
 const H = makeInstanced(pieceGeo, N);
 H.g.instanceCount = N;
@@ -204,24 +204,27 @@ cardTex.colorSpace = THREE.SRGBColorSpace; cardTex.minFilter = THREE.LinearMipma
 const uniforms = {
   uTime: { value: 0 }, uTurn: { value: 0 }, uAtlas: { value: atlasTex }, uPer: { value: PER }, uSize: { value: P * 0.9 },
   uLight: { value: new THREE.Vector3(0, 1.6, 0) }, uMirror: { value: 0 }, uInside: { value: 0 }, uHover: { value: -1 },
-  uBlur: { value: 1.6 }, uPhoto: { value: 0.55 }, uSolid: { value: 0 }, uFade: { value: 1 }, uLift: { value: 0.6 },
+  uBlur: { value: 1.6 }, uPhoto: { value: 0.55 }, uSolid: { value: 0 }, uFade: { value: 1 }, uLift: { value: 0.6 }, uScatter: { value: 1 }, uFlick: { value: 1 },
 };
 const glassVert = `
-attribute vec3 aOff; attribute vec4 aQuat; attribute float aCell, aBirth, aSeed, aLoose;
-uniform float uMirror, uTime, uSize, uLift;
-varying vec3 vW, vN; varying vec2 vUv; varying float vCell, vBirth, vSeed, vId, vEdge, vLoose;
+attribute vec3 aOff; attribute vec4 aQuat; attribute float aCell, aBirth, aSeed, aLoose, aFade;
+uniform float uMirror, uTime, uSize, uLift, uScatter;
+varying vec3 vW, vN; varying vec2 vUv; varying float vCell, vBirth, vSeed, vId, vEdge, vLoose, vFade;
 vec3 rot(vec4 q, vec3 v){ return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v); }
 void main(){
   // loose pieces breathe and drift a little
   float k = aLoose * aLoose;
   vec3 bob = vec3(sin(uTime * 0.5 + aSeed * 40.0), sin(uTime * 0.7 + aSeed * 23.0), cos(uTime * 0.45 + aSeed * 31.0)) * (0.015 + k * 0.16);
-  float sp = (uTime * 0.25 + aSeed * 6.0) * k * step(0.78, aLoose);
+  // the house keeps coming apart and gathering again, in slow waves that roll up through it
+  float wave = 0.5 + 0.5 * sin(uTime * 0.42 - aOff.y * 0.45 + aSeed * 1.2);
+  float wave2 = 0.5 + 0.5 * sin(uTime * 0.17 + aOff.x * 0.25 + aSeed * 0.6);
+  float br = (pow(wave, 4.0) * (0.3 + aLoose) + pow(wave2, 8.0) * 0.6) * uScatter;
+  float sp = (uTime * 0.25 + aSeed * 6.0) * k * step(0.78, aLoose) + br * (aSeed - 0.5) * 3.0;
   vec3 lp = position;
   lp.xz = mat2(cos(sp), -sin(sp), sin(sp), cos(sp)) * lp.xz;
-  // the house keeps gathering itself: every piece now and then drifts out a little and comes back
-  float br = pow(0.5 + 0.5 * sin(uTime * 0.21 + aSeed * 37.0), 6.0) * (0.25 + aLoose * 0.9);
+  lp.yz = mat2(cos(br * aSeed), -sin(br * aSeed), sin(br * aSeed), cos(br * aSeed)) * lp.yz;
   vec3 outDir = normalize(aOff - vec3(0.0, 2.2, 0.0) + 1e-3);
-  vec3 p = rot(aQuat, lp) + aOff + bob + outDir * br * 0.9;
+  vec3 p = rot(aQuat, lp) + aOff + bob + (outDir * 1.3 + vec3(0.0, 0.6 + aSeed, 0.0)) * br;
   p.y += uLift;
   if (uMirror > 0.5) p.y = -p.y;
   vec4 w = modelMatrix * vec4(p, 1.0);
@@ -229,12 +232,12 @@ void main(){
   if (uMirror > 0.5) n.y = -n.y;
   vW = w.xyz; vN = normalize(mat3(modelMatrix) * n);
   vEdge = 1.0 - abs(normal.z);
-  vUv = position.xy / uSize + 0.5; vCell = aCell; vBirth = aBirth; vSeed = aSeed; vId = float(gl_InstanceID); vLoose = aLoose;
+  vUv = position.xy / uSize + 0.5; vCell = aCell; vBirth = aBirth; vSeed = aSeed; vId = float(gl_InstanceID); vLoose = aLoose; vFade = aFade;
   gl_Position = projectionMatrix * viewMatrix * w;
 }`;
 const glassFrag = `
-uniform float uTime, uTurn, uPer, uMirror, uInside, uHover, uBlur, uPhoto, uFade, uSolid; uniform vec3 uLight; uniform sampler2D uAtlas;
-varying vec3 vW, vN; varying vec2 vUv; varying float vCell, vBirth, vSeed, vId, vEdge, vLoose;
+uniform float uTime, uTurn, uPer, uMirror, uInside, uHover, uBlur, uPhoto, uFade, uSolid, uFlick; uniform vec3 uLight; uniform sampler2D uAtlas;
+varying vec3 vW, vN; varying vec2 vUv; varying float vCell, vBirth, vSeed, vId, vEdge, vLoose, vFade;
 // warm iridescence: amber, peach, rose, lilac, a breath of sky blue
 vec3 pal(float h){
   h = fract(h) * 5.0;
@@ -258,10 +261,13 @@ void main(){
   if (has > 0.5) {
     vec2 cell = vec2(mod(vCell, uPer), uPer - 1.0 - floor(vCell / uPer));
     vec3 photo = texture2D(uAtlas, (cell + clamp(vUv, 0.04, 0.96)) / uPer, uBlur).rgb;
-    col = mix(iri * 0.7, photo * 1.1 * mix(vec3(1.0), iri, 0.35), uPhoto);
+    col = mix(iri * 0.7, photo * 1.1 * mix(vec3(1.0), iri, 0.35), uPhoto) + iri * 0.22 * uSolid;
     alpha = mix(0.34, 0.88, uSolid);
   }
-  float shimmer = 0.88 + 0.12 * sin(uTime * 1.3 + vSeed * 20.0 + dot(vW, vec3(1.3, 0.7, 1.1)));
+  // firelight: the lamp flickers, and small flames run up through the pieces
+  float flame = 0.78 + 0.22 * sin(uTime * 7.3 - vW.y * 2.6 + vSeed * 9.0) * sin(uTime * 4.1 - vW.y * 1.7 + vW.x * 0.8 + vSeed * 3.0);
+  float shimmer = (0.9 + 0.1 * sin(uTime * 1.3 + vSeed * 20.0 + dot(vW, vec3(1.3, 0.7, 1.1)))) * flame * uFlick;
+  col = mix(col, col * vec3(1.15, 0.92, 0.75), clamp((flame * uFlick - 0.95) * 3.0, 0.0, 1.0));
   col *= lamp * shimmer;
   // bright glassy rims where the light catches the edges and the bevel
   vec3 rim = pal(h + 0.3) * (fres * 0.25 + vEdge * 0.35) * lamp;
@@ -270,7 +276,7 @@ void main(){
   col += vec3(1.0, 0.85, 0.7) * has * step(0.0, age) * exp(-max(age, 0.0) * 1.4) * 2.5;
   if (abs(vId - uHover) < 0.5) { col = col * 1.5 + vec3(0.25, 0.2, 0.18); alpha = max(alpha, 0.75); }
   if (uMirror > 0.5) { col *= 0.38 * exp(vW.y * 0.7); }
-  alpha *= uFade;
+  alpha *= uFade * vFade;
   gl_FragColor = vec4(col * alpha, alpha);    // premultiplied, with a little extra glow
 }`;
 const glassMat = new THREE.ShaderMaterial({ vertexShader: glassVert, fragmentShader: glassFrag, uniforms,
@@ -288,16 +294,16 @@ const mirror = new THREE.Mesh(H.g, mirrorMat); mirror.frustumCulled = false; mir
   x.fillStyle = g; x.fillRect(0, 0, 4, 256);
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; scene.background = t;
 }
-const floorMat = new THREE.ShaderMaterial({ transparent: true, depthWrite: false, uniforms: { uTime: uniforms.uTime, uTurn: uniforms.uTurn, uInside: uniforms.uInside },
+const floorMat = new THREE.ShaderMaterial({ transparent: true, depthWrite: false, uniforms: { uTime: uniforms.uTime, uTurn: uniforms.uTurn, uInside: uniforms.uInside, uFlick: { value: 1 } },
   vertexShader: `varying vec3 vW; void main(){ vec4 w = modelMatrix*vec4(position,1.0); vW = w.xyz; gl_Position = projectionMatrix*viewMatrix*w; }`,
-  fragmentShader: `uniform float uTime, uTurn, uInside; varying vec3 vW;
+  fragmentShader: `uniform float uTime, uTurn, uInside, uFlick; varying vec3 vW;
   void main(){
     float r = length(vW.xz), a = atan(vW.z, vW.x);
     float rays = pow(0.5 + 0.5*sin(a*11.0 + sin(a*5.0)*1.5 + uTurn*0.6 + uTime*0.05), 5.0) * 0.7 + pow(0.5 + 0.5*sin(a*6.0 - 1.3 - uTime*0.04), 9.0) * 0.8;
     float fall = exp(-max(r - 2.5, 0.0) * 0.28);
     vec3 c1 = vec3(1.0, 0.6, 0.35), c2 = vec3(1.0, 0.45, 0.6), c3 = vec3(0.7, 0.6, 1.0);
     vec3 tint = mix(mix(c1, c2, 0.5 + 0.5*sin(a*2.0 + uTurn)), c3, 0.35 + 0.35*sin(a*3.0 - 0.7));
-    vec3 col = tint * tint * (rays * fall * 0.38 + exp(-r * 0.3) * 0.45) * (1.0 - uInside * 0.6);
+    vec3 col = tint * tint * (rays * fall * 0.38 + exp(-r * 0.3) * 0.45) * (1.0 - uInside * 0.6) * uFlick;
     float fade = smoothstep(22.0, 7.0, r);
     vec3 base = vec3(0.16, 0.09, 0.1);
     gl_FragColor = vec4(base * fade + col * fade, 0.78 * fade);
@@ -327,13 +333,13 @@ const dustMat = new THREE.ShaderMaterial({ transparent: true, depthWrite: false,
 const dust = new THREE.Points(dustGeo, dustMat); dust.frustumCulled = false; dust.renderOrder = 6; world.add(dust);
 
 // Inside: the newest pieces float around you as bigger glowing puzzle pieces with clear photos.
-const MAXF = 28, CARD = 0.72;
+const MAXF = 40, CARD = 0.72;
 const F = makeInstanced(puzzleGeometry(CARD, 0.03), MAXF);
 F.g.instanceCount = 0;
 for (let i = 0; i < MAXF; i++) F.seed[i] = hash(i * 7.7);
 const cardMat = glassMat.clone();
 cardMat.uniforms = { ...uniforms, uAtlas: { value: cardTex }, uPer: { value: PER2 }, uSize: { value: CARD }, uBlur: { value: 0.3 },
-  uPhoto: { value: 0.9 }, uSolid: { value: 1 }, uHover: { value: -1 }, uFade: { value: 0 } };
+  uPhoto: { value: 0.9 }, uSolid: { value: 1 }, uScatter: { value: 0 }, uHover: { value: -1 }, uFade: { value: 0 } };
 const cards = new THREE.Mesh(F.g, cardMat); cards.frustumCulled = false; cards.renderOrder = 5; world.add(cards);
 
 // ---------- pieces ----------
@@ -426,22 +432,29 @@ function frame(now) {
   // floating cards drift slowly around you inside
   uniforms.uLift.value = (0.55 + Math.sin(t * 0.6) * 0.12) * (1 - ease);   // the house hovers above the floor
   lampGlow.position.y = 1.6 + uniforms.uLift.value; roofGlow.position.y = 5 + uniforms.uLift.value;
-  const n = F.g.instanceCount, cq = new THREE.Quaternion(), m4 = new THREE.Matrix4(), Y = new THREE.Vector3(0, 1, 0);
+  // firelight flicker, shared by the pieces, the lamp and the floor
+  const flick = 1 + 0.07 * Math.sin(t * 8.1) + 0.05 * Math.sin(t * 13.7 + 1) + 0.06 * Math.sin(t * 3.3 + 2) + 0.04 * Math.sin(t * 21.3);
+  uniforms.uFlick.value = flick; floorMat.uniforms.uFlick.value = flick;
+  lampGlow.scale.setScalar(6 * (0.85 + 0.15 * flick));
+  // inside, the memories rise around you in a slow spiral, like sparks over a fire, and fade at the top
+  const n = F.g.instanceCount, cq = new THREE.Quaternion(), m4 = new THREE.Matrix4(), Y = new THREE.Vector3(0, 1, 0), mid = new THREE.Vector3(0, 1.5, 0);
   for (let i = 0; i < n; i++) {
-    const s = F.seed[i], a = i * 2.39996 + t * 0.03, ring = 2.05 + (i % 3) * 0.18;
-    const x = Math.cos(a) * ring * 1.25, y = 0.6 + ((i * 3) % 4) * 0.62 + Math.sin(t * 0.5 + s * 9) * 0.1, z = Math.sin(a) * ring * 0.9;
+    const s = F.seed[i], ph = (s + i / Math.max(n, 1) + t * 0.02) % 1;
+    const a = i * 2.39996 + t * 0.06 + ph * 2.2, ring = 1.95 + 0.25 * Math.sin(i * 1.7 + t * 0.3);
+    const x = Math.cos(a) * ring * 1.25, y = 0.15 + ph * 3.7, z = Math.sin(a) * ring * 0.9;
     F.off[i * 3] = x; F.off[i * 3 + 1] = y; F.off[i * 3 + 2] = z;
-    // face the middle of the room, with a slight tilt
-    m4.lookAt(new THREE.Vector3(0, 1.5, 0), new THREE.Vector3(x, y, z), Y);
-    cq.setFromRotationMatrix(m4).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, (s - 0.5) * 0.3)));
+    F.fade[i] = clamp(ph / 0.12, 0, 1) * clamp((1 - ph) / 0.18, 0, 1);
+    // face the middle of the room, swaying a little as they rise
+    m4.lookAt(mid, new THREE.Vector3(x, y, z), Y);
+    cq.setFromRotationMatrix(m4).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.sin(t * 0.6 + s * 7) * 0.15, Math.sin(t * 0.4 + s * 5) * 0.2, Math.sin(t * 0.7 + s * 10) * 0.25)));
     F.quat.set([cq.x, cq.y, cq.z, cq.w], i * 4);
   }
-  F.g.attributes.aOff.needsUpdate = true; F.g.attributes.aQuat.needsUpdate = true;
+  F.g.attributes.aOff.needsUpdate = true; F.g.attributes.aQuat.needsUpdate = true; F.g.attributes.aFade.needsUpdate = true;
     cardMat.uniforms.uFade.value = clamp((ease - 0.45) / 0.45, 0, 1);
   cards.visible = cardMat.uniforms.uFade.value > 0.01;
   uniforms.uFade.value = 1 - ease * 0.6;
   lampGlow.material.opacity = roofGlow.material.opacity = 1 - ease;
-  dust.visible = ease < 0.5;
+  dustMat.uniforms.uScale.value *= 1 - ease * 0.6;
   compMat.uniforms.uBloom.value = lerp(1.1, 0.8, ease);
   updateHover();
   renderFrame(t);
@@ -698,7 +711,7 @@ function homeScene(size = 256) {
   }
   // camera softness and grain
   const o = document.createElement('canvas'); o.width = o.height = S; const ox = o.getContext('2d');
-  ox.filter = `blur(${S * 0.008}px) saturate(1.1)`; ox.drawImage(c, 0, 0);
+  ox.filter = `blur(${S * 0.008}px) saturate(1.1) brightness(1.3)`; ox.drawImage(c, 0, 0);
   const img = ox.getImageData(0, 0, S, S), d = img.data;
   for (let i = 0; i < d.length; i += 4) { const n = (Math.random() - 0.5) * 14; d[i] += n; d[i + 1] += n; d[i + 2] += n; }
   ox.putImageData(img, 0, 0);
