@@ -182,7 +182,7 @@ const pieceGeo = puzzleGeometry(P * 0.9, 0.035);
 function makeInstanced(base, n) {
   const g = new THREE.InstancedBufferGeometry().copy(base);
   const at = (name, size) => { const a = new Float32Array(n * size); g.setAttribute(name, new THREE.InstancedBufferAttribute(a, size)); return a; };
-  return { g, off: at('aOff', 3), quat: at('aQuat', 4), cell: at('aCell', 1).fill(-1), birth: at('aBirth', 1).fill(-100), seed: at('aSeed', 1), loose: at('aLoose', 1), fade: at('aFade', 1).fill(1) };
+  return { g, off: at('aOff', 3), quat: at('aQuat', 4), cell: at('aCell', 1).fill(-1), birth: at('aBirth', 1).fill(-100), seed: at('aSeed', 1), loose: at('aLoose', 1), fade: at('aFade', 1).fill(1), disp: at('aDisp', 3) };
 }
 const H = makeInstanced(pieceGeo, N);
 H.g.instanceCount = N;
@@ -206,15 +206,12 @@ cardTex.colorSpace = THREE.SRGBColorSpace; cardTex.minFilter = THREE.LinearMipma
 
 const uniforms = {
   uTime: { value: 0 }, uTurn: { value: 0 }, uAtlas: { value: atlasTex }, uPer: { value: PER }, uSize: { value: P * 0.9 },
-  uLight: { value: new THREE.Vector3(0, 1.6, 0) }, uMirror: { value: 0 }, uInside: { value: 0 }, uHover: { value: -1 },
+  uLight: { value: new THREE.Vector3(0, 1.6, 0) }, uHearth: { value: new THREE.Vector3(0, 0.45, -2.35) }, uMirror: { value: 0 }, uInside: { value: 0 }, uHover: { value: -1 },
   uBlur: { value: 1.6 }, uPhoto: { value: 0.55 }, uSolid: { value: 0 }, uFade: { value: 1 }, uLift: { value: 0.6 }, uScatter: { value: 1 }, uFlick: { value: 1 },
-  uPushDir: { value: new THREE.Vector3(0, 0, 1) },
-  uPush: { value: Array.from({ length: 8 }, () => new THREE.Vector4(0, -99, 0, 0)) },
-  uWind: { value: Array.from({ length: 8 }, () => new THREE.Vector3()) },
 };
 const glassVert = `
-attribute vec3 aOff; attribute vec4 aQuat; attribute float aCell, aBirth, aSeed, aLoose, aFade;
-uniform float uMirror, uTime, uSize, uLift, uScatter; uniform vec4 uPush[8]; uniform vec3 uWind[8]; uniform vec3 uPushDir;
+attribute vec3 aOff, aDisp; attribute vec4 aQuat; attribute float aCell, aBirth, aSeed, aLoose, aFade;
+uniform float uMirror, uTime, uSize, uLift, uScatter; 
 varying vec3 vW, vN; varying vec2 vUv; varying float vCell, vBirth, vSeed, vId, vEdge, vLoose, vFade;
 vec3 rot(vec4 q, vec3 v){ return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v); }
 void main(){
@@ -225,22 +222,14 @@ void main(){
   float wave = 0.5 + 0.5 * sin(uTime * 0.42 - aOff.y * 0.45 + aSeed * 1.2);
   float wave2 = 0.5 + 0.5 * sin(uTime * 0.17 + aOff.x * 0.25 + aSeed * 0.6);
   float br = (pow(clamp(wave, 0.0, 1.0), 4.0) * (0.3 + aLoose) + pow(clamp(wave2, 0.0, 1.0), 8.0) * 0.6) * uScatter;
-  // a gust from your hand (or the mouse) blows pieces along the way it moved; they drift back like magnets
-  vec3 push = vec3(0.0); float pf = 0.0;
-  for (int i = 0; i < 8; i++) {
-    vec3 v = aOff + vec3(0.0, uLift, 0.0) - uPush[i].xyz;
-    vec3 vs = v - uPushDir * dot(v, uPushDir) * 0.85;   // reach through the house, not only its middle
-    float f = uPush[i].w * exp(-dot(vs, vs) / 3.4);
-    vec3 wd = uWind[i];
-    push += (wd * (0.6 + aSeed * 0.9) + vec3(0.0, 0.2 + aSeed * 0.2, 0.0) + cross(wd, uPushDir) * (aSeed - 0.5) * 1.1) * f; pf += f;
-  }
-  push *= uScatter; pf *= uScatter;
-  float sp = (uTime * 0.25 + aSeed * 6.0) * k * step(0.78, aLoose) + br * (aSeed - 0.5) * 3.0 + pf * (aSeed - 0.5) * 2.5;
+  // pieces your hand (or the mouse) brushed past fly off and drift back (simulated on the CPU)
+  vec3 push = aDisp * uScatter; float pf = length(push);
+  float sp = (uTime * 0.25 + aSeed * 6.0) * k * step(0.78, aLoose) + br * (aSeed - 0.5) * 3.0 + pf * (aSeed - 0.5) * 2.2;
   vec3 lp = position;
   lp.xz = mat2(cos(sp), -sin(sp), sin(sp), cos(sp)) * lp.xz;
   lp.yz = mat2(cos(br * aSeed), -sin(br * aSeed), sin(br * aSeed), cos(br * aSeed)) * lp.yz;
   vec3 outDir = normalize(aOff - vec3(0.0, 2.2, 0.0) + 1e-3);
-  vec3 p = rot(aQuat, lp) + aOff + bob + (outDir * 1.3 + vec3(0.0, 0.6 + aSeed, 0.0)) * br + push * 2.2;
+  vec3 p = rot(aQuat, lp) + aOff + bob + (outDir * 1.3 + vec3(0.0, 0.6 + aSeed, 0.0)) * br + push;
   p.y += uLift;
   if (uMirror > 0.5) p.y = -p.y;
   vec4 w = modelMatrix * vec4(p, 1.0);
@@ -252,7 +241,7 @@ void main(){
   gl_Position = projectionMatrix * viewMatrix * w;
 }`;
 const glassFrag = `
-uniform float uTime, uTurn, uPer, uMirror, uInside, uHover, uBlur, uPhoto, uFade, uSolid, uFlick; uniform vec3 uLight; uniform sampler2D uAtlas;
+uniform float uTime, uTurn, uPer, uMirror, uInside, uHover, uBlur, uPhoto, uFade, uSolid, uFlick; uniform vec3 uLight, uHearth; uniform sampler2D uAtlas;
 varying vec3 vW, vN; varying vec2 vUv; varying float vCell, vBirth, vSeed, vId, vEdge, vLoose, vFade;
 // warm iridescence: amber, peach, rose, lilac, a breath of sky blue
 vec3 pal(float h){
@@ -292,6 +281,14 @@ void main(){
   col = mix(col, col * 0.55 + film * 0.6 * lamp, 0.5 * (1.0 - uSolid * 0.6));
   float glint = pow(clamp(sin((vUv.x + vUv.y) * 3.0 - uTime * 0.5 + vSeed * 6.0) * 0.5 + 0.5, 0.0, 1.0), 14.0);
   col += film * glint * 0.3 * (1.0 - uSolid * 0.5);
+  // inside: every piece shimmers like a soap bubble, warmed by a fire low by the back wall
+  float th = vUv.x * 1.7 + vUv.y * 2.3 + sin(vUv.y * 5.0 + uTime * 0.35 + vSeed * 6.0) * 0.35 + ndv * 1.5 + uTime * 0.05;
+  vec3 bub = 0.5 + 0.5 * cos(6.2832 * (th + vec3(0.0, 0.33, 0.67)));
+  col = mix(col, col * 0.78 + bub * 0.3 * lamp, 0.5 * uInside);
+  col += bub * (fres * 0.5 + vEdge * 0.35) * 0.45 * uInside;
+  float fire = (0.86 + 0.14 * sin(uTime * 2.1 + vW.y * 2.0) * sin(uTime * 3.3 + vW.x)) * uFlick;
+  col *= mix(vec3(1.0), vec3(0.95, 0.74, 0.58), uInside);   // a dimmer, amber room
+  col += vec3(1.0, 0.45, 0.14) * exp(-length(vW - uHearth) * 0.75) * 0.38 * fire * uInside * (0.5 + 0.5 * has);
   vec3 rim = pal(h + 0.3) * (fres * 0.45 + vEdge * 0.45) * lamp;
   col += rim; alpha = max(alpha, vEdge * 0.3 + fres * 0.15);
   float age = uTime - vBirth;
@@ -338,6 +335,7 @@ const glow = (color, sx, sy, pos, order) => {
 };
 const haloBack = glow(new THREE.Color(0.22, 0.11, 0.09), 22, 16, new THREE.Vector3(0, 3, 0), 0);   // light around the house
 const lampGlow = glow(new THREE.Color(0.32, 0.14, 0.06), 6, 6, new THREE.Vector3(0, 1.6, 0), 4);   // the cozy lamp inside
+const hearthGlow = glow(new THREE.Color(0.2, 0.08, 0.015), 3.5, 3, new THREE.Vector3(0, 0.45, -2.35), 4);   // the fireplace, seen from inside
 const roofGlow = glow(new THREE.Color(0.14, 0.05, 0.12), 9, 6, new THREE.Vector3(0, 5, 0), 4);
 
 // Floating dust of light, slow and few.
@@ -443,28 +441,60 @@ function frameCamera(dt) {
 // ---------- frame ----------
 const ray = new THREE.Raycaster();
 // ---------- push: the mouse or an open hand stirs the pieces; they drift back ----------
-const pushes = uniforms.uPush.value, winds = uniforms.uWind.value, gustTarget = new Float32Array(8);
-const pushPlane = new THREE.Plane(), pushHit = new THREE.Vector3(), prevHit = new THREE.Vector3(), gustDir = new THREE.Vector3();
-let lastPush = null;
-function pushAt(ndc, strength) {
+// every piece has its own little body: brushed past, it gets a kick along your motion,
+// flies on with momentum, tumbles, and a soft spring pulls it home
+H.g.attributes.aDisp.setUsage(THREE.DynamicDrawUsage);
+const vel = new Float32Array(N * 3), scr = new Float32Array(N * 2), near = new Float32Array(N), _v = new THREE.Vector3(), _n = new THREE.Vector3();
+let lastPush = null, simActive = false;
+function projectPieces() {
+  const lift = uniforms.uLift.value, cd = camera.position.distanceTo(_n.set(0, HOUSE_H * 0.5, 0));
+  for (let i = 0; i < N; i++) {
+    _v.set(H.off[i * 3], H.off[i * 3 + 1] + lift, H.off[i * 3 + 2]);
+    near[i] = clamp(1 - (_v.distanceTo(camera.position) - (cd - 3.5)) / 7 * 0.8, 0.2, 1);   // the side facing you catches most of the wind
+    _v.set(H.off[i * 3] + H.disp[i * 3], H.off[i * 3 + 1] + H.disp[i * 3 + 1] + lift, H.off[i * 3 + 2] + H.disp[i * 3 + 2]).project(camera);
+    scr[i * 2] = (_v.x * 0.5 + 0.5) * innerWidth; scr[i * 2 + 1] = (0.5 - _v.y * 0.5) * innerHeight;
+  }
+}
+// (x0,y0)->(x1,y1): the path in screen pixels since the last event
+function pushAt(x0, y0, x1, y1) {
   if (view.inside > 0.5) return;
-  pushPlane.setFromNormalAndCoplanarPoint(camera.getWorldDirection(new THREE.Vector3()).negate(), new THREE.Vector3(0, HOUSE_H * 0.5, 0));
-  ray.setFromCamera(ndc, camera);
-  if (!ray.ray.intersectPlane(pushPlane, pushHit)) return;
-  gustDir.subVectors(pushHit, prevHit); prevHit.copy(pushHit);
-  if (gustDir.lengthSq() < 1e-6 || gustDir.lengthSq() > 16) return;   // the wind needs a direction   // the wind needs a direction
-  gustDir.normalize();
-  let k = -1, weakest = 0;
-  for (let i = 0; i < 8; i++) {
-    if (gustTarget[i] < gustTarget[weakest]) weakest = i;
-    if (gustTarget[i] > 0.02 && (pushes[i].x - pushHit.x) ** 2 + (pushes[i].y - pushHit.y) ** 2 + (pushes[i].z - pushHit.z) ** 2 < 1.1 * 1.1) k = i;
+  const dx = x1 - x0, dy = y1 - y0, len = Math.hypot(dx, dy);
+  if (len < 0.5) return;
+  const R = Math.max(50, innerHeight * 0.07);                     // only what you actually brush past
+  const dist = camera.position.length(), px2w = 2 * dist * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) / innerHeight;
+  const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0), up = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1);
+  const fwd = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 2).negate();
+  const speed = Math.min(len, 80) * px2w * 5;                      // faster sweep, stronger gust
+  const ux = dx / len, uy = dy / len;
+  for (let i = 0; i < N; i++) {
+    const px = scr[i * 2] - x0, py = scr[i * 2 + 1] - y0;
+    const t = Math.max(0, Math.min(1, (px * ux + py * uy) / len));
+    const ex = px - ux * t * len, ey = py - uy * t * len, d = Math.hypot(ex, ey);
+    if (d > R) continue;
+    const f = (1 - d / R) ** 2 * near[i], sd = H.seed[i], side = (ex * -uy + ey * ux) < 0 ? -1 : 1;
+    // mostly along your motion, a little sideways away from the path, a little up and in depth
+    const a = speed * f * (0.55 + sd * 0.9), sideK = speed * f * 0.35 * (0.5 + sd);
+    const sx = ux * a - uy * side * sideK, sy = uy * a + ux * side * sideK;   // screen y points down
+    _v.copy(right).multiplyScalar(sx).addScaledVector(up, -sy)
+      .addScaledVector(up, a * 0.2).addScaledVector(fwd, (sd - 0.5) * a * 0.6);
+    // every piece goes its own way, like leaves: a random scatter and a lift off the wall it sits on
+    _n.set(H.off[i * 3], H.off[i * 3 + 1] - 2.2, H.off[i * 3 + 2]).normalize();
+    _v.addScaledVector(_n, a * 0.5).add(_n.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(a * 1.4));
+    vel[i * 3] += _v.x; vel[i * 3 + 1] += _v.y; vel[i * 3 + 2] += _v.z;
   }
-  if (k < 0) {   // a new gust where the hand is now; older gusts stay put and fade, so nothing jumps
-    k = weakest; gustTarget[k] = 0; pushes[k].w = 0; winds[k].copy(gustDir);
-    pushes[k].x = pushHit.x; pushes[k].y = pushHit.y; pushes[k].z = pushHit.z;
+  simActive = true;
+}
+function stepPieces(dt) {
+  if (!simActive) return;
+  const k = 2.2, damp = Math.exp(-dt * 1.6), D = H.disp;   // lazy spring: floats away, settles back in ~3 s
+  let energy = 0;
+  for (let j = 0; j < N * 3; j++) {
+    vel[j] = (vel[j] - D[j] * k * dt) * damp;
+    D[j] += vel[j] * dt;
+    energy += Math.abs(vel[j]) + Math.abs(D[j]);
   }
-  winds[k].lerp(gustDir, 0.5).normalize();
-  gustTarget[k] = Math.min(1.0, gustTarget[k] + strength);
+  if (energy < 1e-3 * N) { D.fill(0); vel.fill(0); simActive = false; }
+  H.g.attributes.aDisp.needsUpdate = true;
 }
 let hover = null, lastFrame = performance.now(), lastYaw = view.yaw;
 function frame(now) {
@@ -488,13 +518,10 @@ function frame(now) {
   uniforms.uScatter.value = 1 - ease;
   uniforms.uBlur.value = lerp(1.6, 0.0, ease); uniforms.uPhoto.value = lerp(0.55, 0.92, ease); uniforms.uSolid.value = ease * 0.85;
   lampGlow.material.opacity = roofGlow.material.opacity = 1 - ease;
+  hearthGlow.material.opacity = ease * flick * (0.9 + 0.1 * Math.sin(t * 4.3));
   dustMat.uniforms.uScale.value *= 1 - ease * 0.6;
   compMat.uniforms.uBloom.value = lerp(1.1, 0.8, ease);
-  for (let i = 0; i < 8; i++) {   // gusts swell softly, then the pieces drift home
-    pushes[i].w += (gustTarget[i] - pushes[i].w) * Math.min(1, dt * 2.2);
-    gustTarget[i] *= Math.exp(-dt * 0.7);
-  }
-  camera.getWorldDirection(uniforms.uPushDir.value);
+  stepPieces(dt);
   if (view.insideT < 0.5) view.ipitch *= Math.exp(-dt * 3);   // outside, the gaze levels again   // magnetic pull back into the house
   updateHover();
   renderFrame(t);
@@ -585,9 +612,8 @@ canvas.addEventListener('pointermove', e => {
   pointerSource = 'mouse';
   pointerNdc = new THREE.Vector2(e.clientX / innerWidth * 2 - 1, -(e.clientY / innerHeight) * 2 + 1); pointerMoved = true;
   if (!drag) {
-    const px = lastPush ? Math.hypot(e.clientX - lastPush.x, e.clientY - lastPush.y) : 0;
+    if (lastPush) { projectPieces(); pushAt(lastPush.x, lastPush.y, e.clientX, e.clientY); }
     lastPush = { x: e.clientX, y: e.clientY };
-    if (px > 0) pushAt(pointerNdc, Math.min(0.35, px / 200));
     return;
   }
   const dx = e.clientX - drag.x, dy = e.clientY - drag.y; drag.x = e.clientX; drag.y = e.clientY; drag.moved += Math.abs(dx) + Math.abs(dy);
@@ -595,7 +621,7 @@ canvas.addEventListener('pointermove', e => {
   view.vyaw = -dx / innerWidth * 4 * 30;
 });
 canvas.addEventListener('pointerup', () => { if (drag && drag.moved < 6 && hover && hover.slot != null) openFocus(pieces.get(hover.slot)); drag = null; dragging = false; });
-canvas.addEventListener('pointerleave', () => { pointerNdc = null; });
+canvas.addEventListener('pointerleave', () => { pointerNdc = null; lastPush = null; });
 canvas.addEventListener('wheel', e => { e.preventDefault();
   if (view.insideT > 0.5) view.ipitch = clamp(view.ipitch - e.deltaY * 0.0022, -0.85, 1.1);   // scroll to look up and down
   else { view.zoom = clamp(view.zoom * Math.exp(e.deltaY * 0.0012), 0.5, 1.8); if (view.zoom < 0.55 && e.deltaY < 0) { view.insideT = 1; view.zoom = 1; } }
@@ -664,7 +690,7 @@ function onHands(tr, now, G) {
     } else if (t) {
       hint = view.insideT > 0.5 ? '✊ grab to look around · ☝️ point to pick' : '🖐 sweep to stir · ✊ grab to turn · ☝️ point';
       const c = next.get(t.id), p = prev.get(t.id);   // an open hand sweeps the pieces aside
-      if (p) { const px = Math.hypot(c.x - p.x, c.y - p.y) * innerWidth; if (px > 1) pushAt(new THREE.Vector2(c.x * 2 - 1, -(c.y * 2 - 1)), Math.min(0.35, px / 200)); }
+      if (p) { projectPieces(); pushAt(p.x * innerWidth, p.y * innerHeight, c.x * innerWidth, c.y * innerHeight); }
     }
   }
   if (mode !== 'point' && pointerSource === 'hand') pointerNdc = null;
@@ -787,7 +813,7 @@ try { setPhoneUrl((await (await fetch('/api/info')).json()).phoneUrl); } catch {
 if (preview || new URLSearchParams(location.search).has('preview')) {
   preview = true;
   document.body.classList.add('preview');
-  $('#qrbox').hidden = true;
+  $('#qr').src = 'img/qr-preview.svg'; $('#url').textContent = 'preview · the board shows the real code';
   const chips = { grab: 'Drag to turn · move to stir', step: 'Double-click to step in · scroll to look', point: 'Click a piece to open it' };
   for (const [k, v] of Object.entries(chips)) $(`#guide [data-g="${k}"] span`).textContent = v;
   addDemoPieces(110);
@@ -797,4 +823,4 @@ if (preview || new URLSearchParams(location.search).has('preview')) {
   initHands();
 }
 requestAnimationFrame(frame);
-window.house = { pushAt, pushes, gustTarget, view, pieces, addDemoPieces, camera, F, onHands: (...a) => onHands(...a), openFocus, count: N };
+window.house = { pushAt, H, vel, view, pieces, addDemoPieces, camera, F, onHands: (...a) => onHands(...a), openFocus, count: N };
