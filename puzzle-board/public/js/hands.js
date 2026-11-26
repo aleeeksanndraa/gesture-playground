@@ -1,14 +1,18 @@
 // Hand tracking for the board: webcam → MediaPipe HandLandmarker → gestures.
 // The tracking and gesture recognition are the same as in Doodle Away (../js/gestures.js).
-import { FilesetResolver, HandLandmarker } from '/vendor/tasks-vision/vision_bundle.mjs';
-import { HandTracker, G } from '/shared/gestures.js';
+// With the Node server these live at /vendor, /models and /shared. As static files (GitHub Pages)
+// they are three folders up, at the root of the repository.
+import { online } from './api.js';
+const ROOT = online ? new URL('../../../', import.meta.url).href : '/';
+const { FilesetResolver, HandLandmarker } = await import(ROOT + 'vendor/tasks-vision/vision_bundle.mjs');
+const { HandTracker, G } = await import(online ? ROOT + 'js/gestures.js' : '/shared/gestures.js');
 
 export { G };
 
 export async function startHands(video, onHands) {
-  const fileset = await FilesetResolver.forVisionTasks('/vendor/tasks-vision/wasm');
+  const fileset = await FilesetResolver.forVisionTasks(ROOT + 'vendor/tasks-vision/wasm');
   const opts = delegate => ({
-    baseOptions: { modelAssetPath: '/models/hand_landmarker.task', delegate },
+    baseOptions: { modelAssetPath: ROOT + 'models/hand_landmarker.task', delegate },
     runningMode: 'VIDEO',
     numHands: 2,
     minHandDetectionConfidence: 0.5, minHandPresenceConfidence: 0.4, minTrackingConfidence: 0.4,

@@ -3,6 +3,7 @@
 // step in through the door: inside, every pane is a shimmering piece of light.
 import * as THREE from './three.module.min.js';
 import { CONFIG } from './config.js';
+import { api } from './api.js';
 
 const $ = s => document.querySelector(s);
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -400,10 +401,10 @@ function addPiece(info, img, born) {
   pieces.get(info.slot).card = k;
   $('#count').textContent = pieces.size;
 }
-function loadImage(url) { return new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; }); }
+function loadImage(url) { return new Promise((res, rej) => { const i = new Image(); i.crossOrigin = 'anonymous'; i.onload = () => res(i); i.onerror = rej; i.src = url; }); }
 async function loadAll() {
   let list = [];
-  try { list = await (await fetch('/api/pieces')).json(); } catch { return; }
+  try { list = await api.list(); } catch { return; }
   const todo = list.filter(p => !pieces.has(p.slot));
   let next = 0;
   const worker = async () => { while (next < todo.length) { const p = todo[next++]; try { addPiece(p, await loadImage(p.url), -100); } catch {} } };
@@ -775,17 +776,16 @@ function drawHands(now) {
 }
 
 // ---------- server ----------
-let opened = false;
 function connect() {
-  const es = new EventSource('/api/stream');
-  es.addEventListener('piece', e => onNewPiece(JSON.parse(e.data)));
-  es.addEventListener('info', e => setPhoneUrl(JSON.parse(e.data).phoneUrl));
-  es.onopen = () => { if (opened) loadAll(); opened = true; $('#offline').hidden = true; };
-  es.onerror = () => { $('#offline').hidden = false; };
+  api.subscribe({
+    onPiece: onNewPiece,
+    onInfo: setPhoneUrl,
+    onOnline: (ok, again) => { $('#offline').hidden = ok; if (ok && again) loadAll(); },
+  });
 }
 function setPhoneUrl(url) {
   $('#url').textContent = url.replace(/^https?:\/\//, '');
-  $('#qr').src = '/api/qr.svg?u=' + encodeURIComponent(url);
+  $('#qr').src = api.qr(url);
 }
 
 // ---------- test pieces (X / Shift+X) ----------
@@ -855,7 +855,7 @@ function addDemoPieces(n) {
 // Without the server (the shareable preview) the board fills itself with test photos and the
 // hints describe the mouse instead of hands.
 let preview = false;
-try { setPhoneUrl((await (await fetch('/api/info')).json()).phoneUrl); } catch { preview = true; }
+try { setPhoneUrl((await api.info()).phoneUrl); } catch { preview = true; }
 if (preview || new URLSearchParams(location.search).has('preview')) {
   preview = true;
   document.body.classList.add('preview');

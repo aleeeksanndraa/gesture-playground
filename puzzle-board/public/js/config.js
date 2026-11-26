@@ -20,4 +20,10 @@ export const CONFIG = {
   // Texture size of one piece on the board (px). Lower = more pieces fit in GPU memory.
   // 256 is good for about 1,500 pieces on a normal laptop; 128 for many thousands.
   pieceTexture: 256,
+
+  // Online without the laptop server (GitHub Pages + a free Supabase project, see supabase.sql).
+  // Leave empty to use the Node server. The anon key is public by design; never put the
+  // service_role key here.
+  supabaseUrl: '',
+  supabaseAnonKey: '',
 };

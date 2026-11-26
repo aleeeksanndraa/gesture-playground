@@ -2,6 +2,7 @@
 // Everything is drawn in a 1024×1024 "piece space" (the same framing as a piece texture on the
 // board: the cell in the middle, room for the tabs around it). Sending exports a 512px JPEG.
 import { CONFIG } from './config.js';
+import { api } from './api.js';
 import { edgesForSlot, tracePieceInSquare } from './puzzle.js';
 import { drawGlassPiece } from './glass2d.js';
 import { dotRing } from './dots.js';
@@ -40,7 +41,7 @@ function startRing(id, color) {
 }
 
 async function fetchSlot() {
-  try { const r = await (await fetch('/api/next', { cache: 'no-store' })).json(); state.slot = r.slot; } catch {}
+  try { state.slot = await api.next(); } catch {}
   $('#already').textContent = state.slot ? `${state.slot} ${state.slot === 1 ? "piece" : "pieces"} already on the board` : 'Be the first piece on the board';
   state.edges = edgesForSlot(state.slot);
   const c = $('#introPiece'), ctx = c.getContext('2d');
@@ -272,9 +273,7 @@ $('#send').addEventListener('click', async () => {
   const btn = $('#send'); btn.disabled = true; document.body.classList.add('sending');
   const img = exportPiece();
   try {
-    const r = await fetch('/api/pieces', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: img.toDataURL('image/jpeg', 0.86) }) });
-    const piece = await r.json();
-    if (!r.ok) throw new Error(piece.error || 'Could not send');
+    const piece = await api.upload(img.toDataURL('image/jpeg', 0.86));
     const c = $('#sentPiece'), ctx = c.getContext('2d');
     ctx.clearRect(0, 0, c.width, c.height);
     drawGlassPiece(ctx, img, edgesForSlot(piece.slot), c.width);

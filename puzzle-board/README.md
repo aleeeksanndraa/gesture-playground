@@ -40,6 +40,20 @@ You can also set your own address for the QR code: `PUBLIC_URL=https://example.c
 Every piece is a JPEG in `data/pieces/`, listed in `data/pieces.json`. To start a fresh board,
 stop the server and delete the `data` folder. To keep an old board, rename the folder.
 
+## Online, without the laptop (GitHub Pages + Supabase)
+
+The house and the phone page also run as plain static files on GitHub Pages, with the photos in a
+free Supabase project instead of the laptop server:
+
+- house: https://aleeeksanndraa.github.io/gesture-playground/piece-of-home/
+- phone: https://aleeeksanndraa.github.io/gesture-playground/piece-of-home/phone.html (the QR code on the house)
+
+Setup, once: create a Supabase project, run `supabase.sql` in its SQL Editor, and put the Project
+URL and the publishable (anon) key in `public/js/config.js`. On github.io the pages then use
+Supabase (`public/js/api.js`); with the Node server on the laptop nothing changes. New pieces reach
+an open house within about 3 seconds. Anyone with the link can add a piece; nobody can change or
+delete one from the page (do that in the Supabase dashboard).
+
 ## New: the house (stories)
 
 Open http://localhost:8080/house for the light version: an almost-house made of small translucent
