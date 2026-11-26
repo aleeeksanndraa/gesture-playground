@@ -494,7 +494,7 @@ function setHover(h) {
   if (!hover) { outline.visible = false; $('#qrbox').classList.remove('call'); setCaption(''); return; }
   if (hover.voxel != null) { outline.visible = true; const sl = slots[hover.voxel]; outline.position.copy(sl.pos).y += uniforms.uLift.value; outline.quaternion.copy(sl.rot); } else outline.visible = false;
   const p = hover.slot != null ? pieces.get(hover.slot) : null;
-  if (p) setCaption(`Piece ${p.slot + 1} · ${p.demo ? 'test piece' : timeAgo(p.t)}`);
+  if (p) setCaption(`Piece ${p.slot + 1} · ${p.demo ? 'test photo' : timeAgo(p.t)}`);
   else setCaption('An empty spot · scan the code to light it up');
   $('#qrbox').classList.toggle('call', !p);
   if (pointerSource === 'hand' && p && performance.now() - dwell.t > 900 && $('#focus').hidden) openFocus(p);
@@ -650,25 +650,84 @@ function setPhoneUrl(url) {
 }
 
 // ---------- test pieces (X / Shift+X) ----------
-const DEMO = ['🏠', '🍜', '🌻', '🐈', '🎧', '🚲', '☕️', '📚', '🌧️', '🧸', '🪴', '🍕', '🎸', '🌙', '🧦', '🫖', '🕯️', '🍞'];
+// Soft, photo-like little scenes of home (window light, a lamp, a sunset over roofs, a candle, a plant
+// on the sill, fairy lights...), so the board looks the way it will with real photos.
+const rnd = (a, b) => a + Math.random() * (b - a);
+function homeScene(size = 256) {
+  const c = document.createElement('canvas'); c.width = c.height = size;
+  const x = c.getContext('2d'), S = size, kind = (Math.random() * 7) | 0;
+  const warm = rnd(15, 45), cool = rnd(200, 260);
+  const grad = (stops, x0 = 0, y0 = 0, x1 = 0, y1 = S) => { const g = x.createLinearGradient(x0, y0, x1, y1); stops.forEach(([p, col]) => g.addColorStop(p, col)); return g; };
+  const glowAt = (cx, cy, r, col, a = 1) => { const g = x.createRadialGradient(cx, cy, 0, cx, cy, r); g.addColorStop(0, col.replace('A', a)); g.addColorStop(1, col.replace('A', 0)); x.fillStyle = g; x.fillRect(0, 0, S, S); };
+  const bokeh = (n, hue, sat = 90) => { for (let i = 0; i < n; i++) { x.globalAlpha = rnd(0.15, 0.55); x.fillStyle = `hsl(${hue + rnd(-15, 15)},${sat}%,${rnd(60, 80)}%)`; x.beginPath(); x.arc(rnd(0, S), rnd(0, S), rnd(S * 0.03, S * 0.09), 0, 7); x.fill(); } x.globalAlpha = 1; };
+  if (kind === 0) {            // a lit window at dusk
+    x.fillStyle = grad([[0, `hsl(${cool},35%,22%)`], [1, `hsl(${cool + 20},30%,12%)`]]); x.fillRect(0, 0, S, S);
+    const wx = rnd(0.2, 0.35) * S, wy = rnd(0.15, 0.3) * S, ww = rnd(0.35, 0.5) * S, wh = rnd(0.4, 0.55) * S;
+    glowAt(wx + ww / 2, wy + wh / 2, S * 0.6, `hsla(${warm},90%,60%,A)`, 0.5);
+    x.fillStyle = grad([[0, `hsl(${warm + 10},95%,72%)`], [1, `hsl(${warm},90%,52%)`]], 0, wy, 0, wy + wh); x.fillRect(wx, wy, ww, wh);
+    x.fillStyle = `hsl(${cool},25%,14%)`; x.fillRect(wx + ww / 2 - 3, wy, 6, wh); x.fillRect(wx, wy + wh / 2 - 3, ww, 6);
+  } else if (kind === 1) {     // sunset over rooftops
+    x.fillStyle = grad([[0, `hsl(${rnd(260, 290)},45%,35%)`], [0.55, `hsl(${rnd(330, 360)},75%,62%)`], [0.8, `hsl(${warm + 10},95%,65%)`]]); x.fillRect(0, 0, S, S);
+    glowAt(rnd(0.3, 0.7) * S, S * 0.72, S * 0.25, 'hsla(45,100%,80%,A)', 0.9);
+    x.fillStyle = `hsl(${cool + 40},30%,14%)`; x.beginPath(); x.moveTo(0, S);
+    let px = 0; while (px < S) { const w = rnd(0.12, 0.25) * S, h = rnd(0.62, 0.8) * S; x.lineTo(px, h); x.lineTo(px + w / 2, h - rnd(0.05, 0.12) * S); x.lineTo(px + w, h); px += w; }
+    x.lineTo(S, S); x.fill();
+  } else if (kind === 2) {     // table lamp in a dim room
+    x.fillStyle = grad([[0, `hsl(${warm},30%,14%)`], [1, `hsl(${warm - 10},35%,8%)`]]); x.fillRect(0, 0, S, S);
+    const lx = rnd(0.35, 0.65) * S; glowAt(lx, S * 0.38, S * 0.7, `hsla(${warm + 8},95%,62%,A)`, 0.75);
+    x.fillStyle = `hsl(${warm + 12},90%,78%)`; x.beginPath(); x.moveTo(lx - S * 0.14, S * 0.46); x.lineTo(lx - S * 0.07, S * 0.26); x.lineTo(lx + S * 0.07, S * 0.26); x.lineTo(lx + S * 0.14, S * 0.46); x.fill();
+    x.fillStyle = `hsl(${warm},25%,10%)`; x.fillRect(lx - 3, S * 0.46, 6, S * 0.2); x.fillRect(0, S * 0.68, S, S * 0.32);
+  } else if (kind === 3) {     // fairy lights bokeh
+    x.fillStyle = grad([[0, `hsl(${rnd(280, 340)},35%,16%)`], [1, `hsl(${cool},30%,10%)`]]); x.fillRect(0, 0, S, S);
+    bokeh(22, warm + 15); bokeh(8, rnd(320, 350), 80);
+  } else if (kind === 4) {     // a plant on a sunny sill
+    x.fillStyle = grad([[0, `hsl(${rnd(190, 210)},60%,78%)`], [1, `hsl(${warm + 20},70%,80%)`]]); x.fillRect(0, 0, S, S);
+    glowAt(S * 0.7, S * 0.2, S * 0.5, 'hsla(50,100%,92%,A)', 0.9);
+    x.fillStyle = `hsl(${warm},45%,45%)`; x.fillRect(S * 0.36, S * 0.66, S * 0.28, S * 0.2); x.fillStyle = `hsl(30,25%,60%)`; x.fillRect(0, S * 0.84, S, S * 0.16);
+    x.strokeStyle = `hsl(${rnd(110, 140)},45%,32%)`; x.lineWidth = S * 0.035; x.lineCap = 'round';
+    for (let i = 0; i < 7; i++) { const a = -Math.PI / 2 + rnd(-0.9, 0.9); x.beginPath(); x.moveTo(S / 2, S * 0.66); x.quadraticCurveTo(S / 2 + Math.cos(a) * S * 0.15, S * 0.5, S / 2 + Math.cos(a) * S * 0.32, S * 0.66 + Math.sin(a) * S * 0.45); x.stroke(); }
+  } else if (kind === 5) {     // candle and warm dark
+    x.fillStyle = `hsl(${warm - 5},40%,7%)`; x.fillRect(0, 0, S, S);
+    const cx = rnd(0.4, 0.6) * S; glowAt(cx, S * 0.42, S * 0.55, `hsla(${warm + 10},100%,58%,A)`, 0.8);
+    x.fillStyle = `hsl(40,40%,85%)`; x.fillRect(cx - S * 0.07, S * 0.5, S * 0.14, S * 0.35);
+    glowAt(cx, S * 0.44, S * 0.06, 'hsla(48,100%,90%,A)', 1);
+  } else {                     // sea / sky through a window
+    x.fillStyle = grad([[0, `hsl(${cool - 10},55%,70%)`], [0.55, `hsl(${cool - 20},50%,85%)`], [0.56, `hsl(${cool},45%,45%)`], [1, `hsl(${cool + 10},40%,30%)`]]); x.fillRect(0, 0, S, S);
+    glowAt(rnd(0.2, 0.8) * S, S * 0.4, S * 0.3, 'hsla(45,100%,95%,A)', 0.8);
+    x.fillStyle = `hsl(${warm},25%,92%)`; x.fillRect(0, 0, S * 0.08, S); x.fillRect(S * 0.92, 0, S * 0.08, S);
+  }
+  // camera softness and grain
+  const o = document.createElement('canvas'); o.width = o.height = S; const ox = o.getContext('2d');
+  ox.filter = `blur(${S * 0.008}px) saturate(1.1)`; ox.drawImage(c, 0, 0);
+  const img = ox.getImageData(0, 0, S, S), d = img.data;
+  for (let i = 0; i < d.length; i += 4) { const n = (Math.random() - 0.5) * 14; d[i] += n; d[i + 1] += n; d[i + 2] += n; }
+  ox.putImageData(img, 0, 0);
+  return o;
+}
 function addDemoPieces(n) {
   const t = clock();
   for (let i = 0; i < n; i++) {
-    const c = document.createElement('canvas'); c.width = c.height = 128;
-    const x = c.getContext('2d'), hue = [350, 15, 30, 280, 220, 330][(Math.random() * 6) | 0] + Math.random() * 20;
-    const g = x.createLinearGradient(0, 0, 128, 128);
-    g.addColorStop(0, `hsl(${hue},80%,65%)`); g.addColorStop(1, `hsl(${(hue + 40) % 360},70%,40%)`);
-    x.fillStyle = g; x.fillRect(0, 0, 128, 128);
-    x.font = '64px serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(DEMO[(Math.random() * DEMO.length) | 0], 64, 68);
     let slot = 0; while (pieces.has(slot)) slot++;
-    addPiece({ id: 'demo' + slot, slot, demo: true }, c, t + i * 0.015);
+    addPiece({ id: 'demo' + slot, slot, demo: true }, homeScene(), t + i * 0.015);
   }
 }
 
 // ---------- start ----------
-fetch('/api/info').then(r => r.json()).then(i => setPhoneUrl(i.phoneUrl)).catch(() => {});
-await loadAll();
-connect();
+// Without the server (the shareable preview) the board fills itself with test photos and the
+// hints describe the mouse instead of hands.
+let preview = false;
+try { setPhoneUrl((await (await fetch('/api/info')).json()).phoneUrl); } catch { preview = true; }
+if (preview || new URLSearchParams(location.search).has('preview')) {
+  preview = true;
+  document.body.classList.add('preview');
+  $('#qrbox').hidden = true;
+  const chips = { grab: 'Drag to turn', step: 'Double-click to step in', point: 'Click a piece to open it' };
+  for (const [k, v] of Object.entries(chips)) $(`#guide [data-g="${k}"] span`).textContent = v;
+  addDemoPieces(110);
+} else {
+  await loadAll();
+  connect();
+  initHands();
+}
 requestAnimationFrame(frame);
-initHands();
 window.house = { view, pieces, addDemoPieces, camera, F, onHands: (...a) => onHands(...a), openFocus, count: N };
