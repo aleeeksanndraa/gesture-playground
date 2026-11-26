@@ -208,10 +208,12 @@ const uniforms = {
   uTime: { value: 0 }, uTurn: { value: 0 }, uAtlas: { value: atlasTex }, uPer: { value: PER }, uSize: { value: P * 0.9 },
   uLight: { value: new THREE.Vector3(0, 1.6, 0) }, uMirror: { value: 0 }, uInside: { value: 0 }, uHover: { value: -1 },
   uBlur: { value: 1.6 }, uPhoto: { value: 0.55 }, uSolid: { value: 0 }, uFade: { value: 1 }, uLift: { value: 0.6 }, uScatter: { value: 1 }, uFlick: { value: 1 },
+  uPushDir: { value: new THREE.Vector3(0, 0, 1) },
+  uPush: { value: Array.from({ length: 8 }, () => new THREE.Vector4(0, -99, 0, 0)) },
 };
 const glassVert = `
 attribute vec3 aOff; attribute vec4 aQuat; attribute float aCell, aBirth, aSeed, aLoose, aFade;
-uniform float uMirror, uTime, uSize, uLift, uScatter;
+uniform float uMirror, uTime, uSize, uLift, uScatter; uniform vec4 uPush[8]; uniform vec3 uPushDir;
 varying vec3 vW, vN; varying vec2 vUv; varying float vCell, vBirth, vSeed, vId, vEdge, vLoose, vFade;
 vec3 rot(vec4 q, vec3 v){ return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v); }
 void main(){
@@ -222,12 +224,21 @@ void main(){
   float wave = 0.5 + 0.5 * sin(uTime * 0.42 - aOff.y * 0.45 + aSeed * 1.2);
   float wave2 = 0.5 + 0.5 * sin(uTime * 0.17 + aOff.x * 0.25 + aSeed * 0.6);
   float br = (pow(clamp(wave, 0.0, 1.0), 4.0) * (0.3 + aLoose) + pow(clamp(wave2, 0.0, 1.0), 8.0) * 0.6) * uScatter;
-  float sp = (uTime * 0.25 + aSeed * 6.0) * k * step(0.78, aLoose) + br * (aSeed - 0.5) * 3.0;
+  // your hand (or the mouse) pushes pieces away; they drift back like magnets
+  vec3 push = vec3(0.0); float pf = 0.0;
+  for (int i = 0; i < 8; i++) {
+    vec3 v = aOff + vec3(0.0, uLift, 0.0) - uPush[i].xyz;
+    vec3 vs = v - uPushDir * dot(v, uPushDir) * 0.85;   // reach through the house, not only its middle
+    float f = uPush[i].w * exp(-dot(vs, vs) / 2.2);
+    push += normalize(v + vec3(0.0, 1e-3, 0.0)) * f; pf += f;
+  }
+  push *= uScatter; pf *= uScatter;
+  float sp = (uTime * 0.25 + aSeed * 6.0) * k * step(0.78, aLoose) + br * (aSeed - 0.5) * 3.0 + pf * (aSeed - 0.5) * 5.0;
   vec3 lp = position;
   lp.xz = mat2(cos(sp), -sin(sp), sin(sp), cos(sp)) * lp.xz;
   lp.yz = mat2(cos(br * aSeed), -sin(br * aSeed), sin(br * aSeed), cos(br * aSeed)) * lp.yz;
   vec3 outDir = normalize(aOff - vec3(0.0, 2.2, 0.0) + 1e-3);
-  vec3 p = rot(aQuat, lp) + aOff + bob + (outDir * 1.3 + vec3(0.0, 0.6 + aSeed, 0.0)) * br;
+  vec3 p = rot(aQuat, lp) + aOff + bob + (outDir * 1.3 + vec3(0.0, 0.6 + aSeed, 0.0)) * br + push * (1.8 + aSeed * 1.6);
   p.y += uLift;
   if (uMirror > 0.5) p.y = -p.y;
   vec4 w = modelMatrix * vec4(p, 1.0);
@@ -274,12 +285,17 @@ void main(){
   col = mix(col, col * vec3(1.15, 0.92, 0.75), clamp((flame * uFlick - 0.95) * 3.0, 0.0, 1.0));
   col *= lamp * shimmer;
   // bright glassy rims where the light catches the edges and the bevel
-  vec3 rim = pal(h + 0.3) * (fres * 0.25 + vEdge * 0.35) * lamp;
+  // a thin film of colour slides across every piece, plus a slow glint
+  vec3 film = pal(h * 1.6 + vUv.x * 1.1 - vUv.y * 0.8 + ndv * 1.2 + uTime * 0.03);
+  col = mix(col, col * 0.55 + film * 0.6 * lamp, 0.5 * (1.0 - uSolid * 0.6));
+  float glint = pow(clamp(sin((vUv.x + vUv.y) * 3.0 - uTime * 0.5 + vSeed * 6.0) * 0.5 + 0.5, 0.0, 1.0), 14.0);
+  col += film * glint * 0.3 * (1.0 - uSolid * 0.5);
+  vec3 rim = pal(h + 0.3) * (fres * 0.45 + vEdge * 0.45) * lamp;
   col += rim; alpha = max(alpha, vEdge * 0.3 + fres * 0.15);
   float age = uTime - vBirth;
   col += vec3(1.0, 0.85, 0.7) * has * step(0.0, age) * exp(-max(age, 0.0) * 1.4) * 2.5;
   if (abs(vId - uHover) < 0.5) { col = col * 1.5 + vec3(0.25, 0.2, 0.18); alpha = max(alpha, 0.75); }
-  if (uMirror > 0.5) { col *= 0.38 * exp(vW.y * 0.7); }
+  if (uMirror > 0.5) { col *= mix(0.38, 0.8, uInside) * exp(vW.y * mix(0.7, 0.2, uInside)); }
   alpha *= uFade * vFade;
   gl_FragColor = vec4(col * alpha, alpha);    // premultiplied, with a little extra glow
 }`;
@@ -307,10 +323,10 @@ const floorMat = new THREE.ShaderMaterial({ transparent: true, depthWrite: false
     float fall = exp(-max(r - 2.5, 0.0) * 0.28);
     vec3 c1 = vec3(1.0, 0.6, 0.35), c2 = vec3(1.0, 0.45, 0.6), c3 = vec3(0.7, 0.6, 1.0);
     vec3 tint = mix(mix(c1, c2, 0.5 + 0.5*sin(a*2.0 + uTurn)), c3, 0.35 + 0.35*sin(a*3.0 - 0.7));
-    vec3 col = tint * tint * (rays * fall * 0.38 + exp(-r * 0.3) * 0.45) * (1.0 - uInside * 0.6) * uFlick;
+    vec3 col = tint * tint * (rays * fall * 0.38 + exp(-r * 0.3) * 0.45) * (1.0 - uInside * 0.9) * uFlick;
     float fade = smoothstep(22.0, 7.0, r);
     vec3 base = vec3(0.16, 0.09, 0.1);
-    gl_FragColor = vec4(base * fade + col * fade, 0.78 * fade);
+    gl_FragColor = vec4(base * fade + col * fade, 0.78 * fade * (1.0 - uInside * 0.7));
   }` });
 const floor = new THREE.Mesh(new THREE.PlaneGeometry(80, 80), floorMat);
 floor.rotation.x = -Math.PI / 2; floor.renderOrder = 2; world.add(floor);
@@ -398,7 +414,7 @@ async function onNewPiece(info) {
 }
 
 // ---------- view: outside orbit ⇄ inside through the door ----------
-const view = { yaw: -0.5, pitch: 0.12, inside: 0, insideT: 0, zoom: 1, vyaw: 0, turnHue: 0 };
+const view = { ipitch: 0, yaw: -0.5, pitch: 0.12, inside: 0, insideT: 0, zoom: 1, vyaw: 0, turnHue: 0 };
 const clock0 = performance.now(), clock = () => (performance.now() - clock0) / 1000;
 const center = new THREE.Vector3(0, HOUSE_H * 0.5, 0);
 function frameCamera(dt) {
@@ -412,7 +428,8 @@ function frameCamera(dt) {
   const inPos = eye.clone().addScaledVector(dir, 0.15);
   camera.position.lerpVectors(outPos, inPos, ease);
   camera.position.y = Math.max(0.25, camera.position.y);
-  const look = center.clone().lerp(eye.clone().addScaledVector(dir, -5).setY(eye.y + view.pitch * -2), ease);
+  const ip = view.ipitch, lookDir = new THREE.Vector3(-Math.sin(view.yaw) * Math.cos(ip), Math.sin(ip), -Math.cos(view.yaw) * Math.cos(ip));
+  const look = center.clone().lerp(eye.clone().addScaledVector(lookDir, 5), ease);
   camera.lookAt(look);
   camera.fov = lerp(40, 62, ease); camera.updateProjectionMatrix();
   uniforms.uInside.value = ease;
@@ -423,6 +440,23 @@ function frameCamera(dt) {
 
 // ---------- frame ----------
 const ray = new THREE.Raycaster();
+// ---------- push: the mouse or an open hand stirs the pieces; they drift back ----------
+const pushes = uniforms.uPush.value, pushPlane = new THREE.Plane(), pushHit = new THREE.Vector3();
+let lastPush = null;
+function pushAt(ndc, strength) {
+  if (view.inside > 0.5) return;
+  pushPlane.setFromNormalAndCoplanarPoint(camera.getWorldDirection(new THREE.Vector3()).negate(), new THREE.Vector3(0, HOUSE_H * 0.5, 0));
+  ray.setFromCamera(ndc, camera);
+  if (!ray.ray.intersectPlane(pushPlane, pushHit)) return;
+  let best = null, weakest = pushes[0];
+  for (const q of pushes) {
+    if (q.w < weakest.w) weakest = q;
+    if (q.w > 0.02 && (q.x - pushHit.x) ** 2 + (q.y - pushHit.y) ** 2 + (q.z - pushHit.z) ** 2 < 0.35 * 0.35) best = q;
+  }
+  const q = best || weakest;
+  if (!best) q.w = 0;
+  q.x = pushHit.x; q.y = pushHit.y; q.z = pushHit.z; q.w = Math.min(1.2, q.w + strength);
+}
 let hover = null, lastFrame = performance.now(), lastYaw = view.yaw;
 function frame(now) {
   const dt = Math.min(0.05, (now - lastFrame) / 1000); lastFrame = now;
@@ -447,6 +481,9 @@ function frame(now) {
   lampGlow.material.opacity = roofGlow.material.opacity = 1 - ease;
   dustMat.uniforms.uScale.value *= 1 - ease * 0.6;
   compMat.uniforms.uBloom.value = lerp(1.1, 0.8, ease);
+  for (const q of pushes) q.w *= Math.exp(-dt * 0.9);
+  camera.getWorldDirection(uniforms.uPushDir.value);
+  if (view.insideT < 0.5) view.ipitch *= Math.exp(-dt * 3);   // outside, the gaze levels again   // magnetic pull back into the house
   updateHover();
   renderFrame(t);
   drawHands(now);
@@ -535,7 +572,12 @@ canvas.addEventListener('pointerdown', e => { drag = { x: e.clientX, y: e.client
 canvas.addEventListener('pointermove', e => {
   pointerSource = 'mouse';
   pointerNdc = new THREE.Vector2(e.clientX / innerWidth * 2 - 1, -(e.clientY / innerHeight) * 2 + 1); pointerMoved = true;
-  if (!drag) return;
+  if (!drag) {
+    const px = lastPush ? Math.hypot(e.clientX - lastPush.x, e.clientY - lastPush.y) : 0;
+    lastPush = { x: e.clientX, y: e.clientY };
+    if (px > 0) pushAt(pointerNdc, Math.min(0.6, px / 110));
+    return;
+  }
   const dx = e.clientX - drag.x, dy = e.clientY - drag.y; drag.x = e.clientX; drag.y = e.clientY; drag.moved += Math.abs(dx) + Math.abs(dy);
   turn(dx / innerWidth * 4, dy / innerHeight * 2.2);
   view.vyaw = -dx / innerWidth * 4 * 30;
@@ -543,13 +585,14 @@ canvas.addEventListener('pointermove', e => {
 canvas.addEventListener('pointerup', () => { if (drag && drag.moved < 6 && hover && hover.slot != null) openFocus(pieces.get(hover.slot)); drag = null; dragging = false; });
 canvas.addEventListener('pointerleave', () => { pointerNdc = null; });
 canvas.addEventListener('wheel', e => { e.preventDefault();
-  if (view.insideT > 0.5) { if (e.deltaY > 0) view.insideT = 0; }
+  if (view.insideT > 0.5) view.ipitch = clamp(view.ipitch - e.deltaY * 0.0022, -0.85, 1.1);   // scroll to look up and down
   else { view.zoom = clamp(view.zoom * Math.exp(e.deltaY * 0.0012), 0.5, 1.8); if (view.zoom < 0.55 && e.deltaY < 0) { view.insideT = 1; view.zoom = 1; } }
 }, { passive: false });
 canvas.addEventListener('dblclick', () => { view.insideT = view.insideT > 0.5 ? 0 : 1; });
 function turn(dyaw, dpitch) {
   view.yaw -= dyaw;
-  view.pitch = clamp(view.pitch + dpitch * (view.inside > 0.5 ? -0.6 : 1), -0.05, 0.9);
+  if (view.inside > 0.5) view.ipitch = clamp(view.ipitch - dpitch * 0.9, -0.85, 1.1);   // inside: look up and down
+  else view.pitch = clamp(view.pitch + dpitch, -0.05, 0.9);
 }
 addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
@@ -606,7 +649,11 @@ function onHands(tr, now, G) {
       mode = 'point'; hint = 'hold on a piece to open it';
       const c = next.get(t.id); pointerSource = 'hand';
       pointerNdc = new THREE.Vector2(c.x * 2 - 1, -(c.y * 2 - 1)); pointerMoved = true;
-    } else if (t) hint = '✊ grab to turn · ☝️ point to pick';
+    } else if (t) {
+      hint = view.insideT > 0.5 ? '✊ grab to look around · ☝️ point to pick' : '🖐 sweep to stir · ✊ grab to turn · ☝️ point';
+      const c = next.get(t.id), p = prev.get(t.id);   // an open hand sweeps the pieces aside
+      if (p) { const px = Math.hypot(c.x - p.x, c.y - p.y) * innerWidth; if (px > 1) pushAt(new THREE.Vector2(c.x * 2 - 1, -(c.y * 2 - 1)), Math.min(0.6, px / 110)); }
+    }
   }
   if (mode !== 'point' && pointerSource === 'hand') pointerNdc = null;
   prev = next;
@@ -729,7 +776,7 @@ if (preview || new URLSearchParams(location.search).has('preview')) {
   preview = true;
   document.body.classList.add('preview');
   $('#qrbox').hidden = true;
-  const chips = { grab: 'Drag to turn', step: 'Double-click to step in', point: 'Click a piece to open it' };
+  const chips = { grab: 'Drag to turn · move to stir', step: 'Double-click to step in · scroll to look', point: 'Click a piece to open it' };
   for (const [k, v] of Object.entries(chips)) $(`#guide [data-g="${k}"] span`).textContent = v;
   addDemoPieces(110);
 } else {
@@ -738,4 +785,4 @@ if (preview || new URLSearchParams(location.search).has('preview')) {
   initHands();
 }
 requestAnimationFrame(frame);
-window.house = { view, pieces, addDemoPieces, camera, F, onHands: (...a) => onHands(...a), openFocus, count: N };
+window.house = { pushAt, pushes, view, pieces, addDemoPieces, camera, F, onHands: (...a) => onHands(...a), openFocus, count: N };
