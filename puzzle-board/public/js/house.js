@@ -128,7 +128,7 @@ const slots = [];
   // how loose each piece is: mostly by height, with noise, so the edge of the puzzle is ragged
   slots.forEach((s, i) => {
     const h = s.home.y / HOUSE_H, k = hash(i * 3.1 + 7);
-    s.loose = clamp((h - 0.5) * 1.5 + (k - 0.5) * 0.7 + (hash(i * 1.7) < 0.05 ? 0.6 : 0), 0, 1);
+    s.loose = clamp((h - 0.62) * 1.4 + (k - 0.5) * 0.6 + (hash(i * 1.7) < 0.05 ? 0.6 : 0), 0, 1);   // the top frays, the outline still reads as a house
     s.seed = hash(i * 1.37);
   });
   // the loosest pieces leave the house completely (a few vanish, leaving gaps)
@@ -221,19 +221,19 @@ void main(){
   // the house keeps coming apart and gathering again, in slow waves that roll up through it
   float wave = 0.5 + 0.5 * sin(uTime * 0.42 - aOff.y * 0.45 + aSeed * 1.2);
   float wave2 = 0.5 + 0.5 * sin(uTime * 0.17 + aOff.x * 0.25 + aSeed * 0.6);
-  float br = (pow(clamp(wave, 0.0, 1.0), 4.0) * (0.3 + aLoose) + pow(clamp(wave2, 0.0, 1.0), 8.0) * 0.6) * uScatter;
+  float br = (pow(clamp(wave, 0.0, 1.0), 4.0) * (0.3 + aLoose) + pow(clamp(wave2, 0.0, 1.0), 8.0) * 0.6) * uScatter * 0.7;
   // pieces your hand (or the mouse) brushed past fly off and drift back (simulated on the CPU)
   vec3 push = aDisp * uScatter; float pf = length(push);
   float sp = (uTime * 0.25 + aSeed * 6.0) * k * step(0.78, aLoose) + br * (aSeed - 0.5) * 3.0 + pf * (aSeed - 0.5) * 2.2;
-  sp += sin(uTime * 0.2 + aSeed * 9.0) * 0.45 * uScatter;   // a slow tumble of each piece outside
-  vec3 lp = position * mix(1.0, 0.82, uScatter);            // smaller pieces, more air between them
+  sp += sin(uTime * 0.2 + aSeed * 9.0) * 0.3 * uScatter;   // a slow tumble of each piece outside
+  vec3 lp = position * mix(1.0, 0.88, uScatter);            // smaller pieces, more air between them
   lp.xz = mat2(cos(sp), -sin(sp), sin(sp), cos(sp)) * lp.xz;
   lp.yz = mat2(cos(br * aSeed), -sin(br * aSeed), sin(br * aSeed), cos(br * aSeed)) * lp.yz;
   vec3 outDir = normalize(aOff - vec3(0.0, 2.2, 0.0) + 1e-3);
   // outside the house loosens: it opens up and every piece wanders slowly on its own path
-  vec3 home = aOff + (aOff - vec3(0.0, 2.2, 0.0)) * 0.22 * uScatter;
-  vec3 wander = vec3(sin(uTime * 0.13 + aSeed * 17.0), sin(uTime * 0.11 + aSeed * 29.0) * 0.6, cos(uTime * 0.12 + aSeed * 11.0)) * 0.22 * uScatter;
-  vec3 p = rot(aQuat, lp) + home + wander + bob + (outDir * 1.3 + vec3(0.0, 0.6 + aSeed, 0.0)) * br + push;
+  vec3 home = aOff + (aOff - vec3(0.0, 2.2, 0.0)) * 0.1 * uScatter;
+  vec3 wander = vec3(sin(uTime * 0.13 + aSeed * 17.0), sin(uTime * 0.11 + aSeed * 29.0) * 0.6, cos(uTime * 0.12 + aSeed * 11.0)) * 0.13 * uScatter;
+  vec3 p = rot(aQuat, lp) + home + wander + bob + (outDir * 1.0 + vec3(0.0, 0.45 + aSeed * 0.8, 0.0)) * br + push;
   p.y += uLift;
   if (uMirror > 0.5) p.y = -p.y;
   vec4 w = modelMatrix * vec4(p, 1.0);
@@ -455,7 +455,7 @@ function projectPieces() {
   for (let i = 0; i < N; i++) {
     _v.set(H.off[i * 3], H.off[i * 3 + 1] + lift, H.off[i * 3 + 2]);
     near[i] = clamp(1 - (_v.distanceTo(camera.position) - (cd - 3.5)) / 7 * 0.8, 0.2, 1);   // the side facing you catches most of the wind
-    _v.set(H.off[i * 3] * 1.22 + H.disp[i * 3], (H.off[i * 3 + 1] - 2.2) * 1.22 + 2.2 + H.disp[i * 3 + 1] + lift, H.off[i * 3 + 2] * 1.22 + H.disp[i * 3 + 2]).project(camera);
+    _v.set(H.off[i * 3] * 1.1 + H.disp[i * 3], (H.off[i * 3 + 1] - 2.2) * 1.1 + 2.2 + H.disp[i * 3 + 1] + lift, H.off[i * 3 + 2] * 1.1 + H.disp[i * 3 + 2]).project(camera);
     scr[i * 2] = (_v.x * 0.5 + 0.5) * innerWidth; scr[i * 2 + 1] = (0.5 - _v.y * 0.5) * innerHeight;
   }
 }
@@ -541,7 +541,7 @@ const pickBoxes = new THREE.InstancedMesh(new THREE.BoxGeometry(P * 0.9, P * 0.9
 let pickLift = null;
 function placePickBoxes() {
   const m = new THREE.Matrix4(), one = new THREE.Vector3(1, 1, 1), lift = uniforms.uLift.value;
-  const e = 0.22 * uniforms.uScatter.value, c = new THREE.Vector3(0, 2.2, 0);   // follow the house as it opens up outside
+  const e = 0.1 * uniforms.uScatter.value, c = new THREE.Vector3(0, 2.2, 0);   // follow the house as it opens up outside
   slots.forEach((s, i) => pickBoxes.setMatrixAt(i, m.compose(s.pos.clone().sub(c).multiplyScalar(1 + e).add(c).setY((s.pos.y - 2.2) * (1 + e) + 2.2 + lift), s.rot, one)));
   pickBoxes.instanceMatrix.needsUpdate = true; pickBoxes.computeBoundingSphere(); pickLift = lift;
 }
