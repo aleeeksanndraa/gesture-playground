@@ -59,7 +59,7 @@ around you, lit by a flickering, fire-like light.
 | `I` or space | step in / out |
 | `X` / `Shift+X` | add 60 / 300 test pieces (only on screen) |
 
-Fonts: Fraunces (stand-in for Fields) and Inter, both in `public/type/` (SIL Open Font License).
+Font: Montserrat, in `public/type/` (SIL Open Font License).
 
 ## On the board
 

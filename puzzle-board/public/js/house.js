@@ -26,7 +26,7 @@ const quadScene = new THREE.Scene(); quadScene.add(quad);
 const fsVert = `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`;
 const downMat = new THREE.ShaderMaterial({ vertexShader: fsVert, uniforms: { tSrc: { value: null }, uTexel: { value: new THREE.Vector2() }, uFirst: { value: 0 } },
   fragmentShader: `uniform sampler2D tSrc; uniform vec2 uTexel; uniform float uFirst; varying vec2 vUv;
-  vec3 s(vec2 o){ vec3 c = texture2D(tSrc, vUv + o*uTexel).rgb; if (uFirst > 0.5) { float l = max(c.r,max(c.g,c.b)); c *= smoothstep(0.3, 1.2, l); } return c; }
+  vec3 s(vec2 o){ vec3 c = texture2D(tSrc, vUv + o*uTexel).rgb; if (any(isnan(c)) || any(isinf(c))) c = vec3(0.0); c = clamp(c, 0.0, 32.0); if (uFirst > 0.5) { float l = max(c.r,max(c.g,c.b)); c *= smoothstep(0.3, 1.2, l); } return c; }
   void main(){ vec3 c = s(vec2(0))*4.0 + s(vec2(-1,-1)) + s(vec2(1,-1)) + s(vec2(-1,1)) + s(vec2(1,1)); gl_FragColor = vec4(c/8.0, 1.0); }` });
 const upMat = new THREE.ShaderMaterial({ vertexShader: fsVert, blending: THREE.AdditiveBlending, depthTest: false, transparent: true,
   uniforms: { tSrc: { value: null }, uTexel: { value: new THREE.Vector2() } },
@@ -39,7 +39,10 @@ const compMat = new THREE.ShaderMaterial({ vertexShader: fsVert,
   fragmentShader: `uniform sampler2D tScene, tBloom; uniform float uBloom, uTime; varying vec2 vUv;
   vec3 aces(vec3 x){ return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14), 0.0, 1.0); }
   void main(){
-    vec3 c = texture2D(tScene, vUv).rgb + texture2D(tBloom, vUv).rgb * uBloom;
+    vec3 sc = texture2D(tScene, vUv).rgb, bl = texture2D(tBloom, vUv).rgb;
+    if (any(isnan(sc)) || any(isinf(sc))) sc = vec3(0.0);
+    if (any(isnan(bl)) || any(isinf(bl))) bl = vec3(0.0);
+    vec3 c = clamp(sc, 0.0, 32.0) + clamp(bl, 0.0, 32.0) * uBloom;
     vec2 d = vUv - 0.5; c *= 1.0 - dot(d, d) * 0.9;                       // vignette
     c = aces(c * 1.05);
     c = pow(c, vec3(1.0/2.2));
@@ -218,7 +221,7 @@ void main(){
   // the house keeps coming apart and gathering again, in slow waves that roll up through it
   float wave = 0.5 + 0.5 * sin(uTime * 0.42 - aOff.y * 0.45 + aSeed * 1.2);
   float wave2 = 0.5 + 0.5 * sin(uTime * 0.17 + aOff.x * 0.25 + aSeed * 0.6);
-  float br = (pow(wave, 4.0) * (0.3 + aLoose) + pow(wave2, 8.0) * 0.6) * uScatter;
+  float br = (pow(clamp(wave, 0.0, 1.0), 4.0) * (0.3 + aLoose) + pow(clamp(wave2, 0.0, 1.0), 8.0) * 0.6) * uScatter;
   float sp = (uTime * 0.25 + aSeed * 6.0) * k * step(0.78, aLoose) + br * (aSeed - 0.5) * 3.0;
   vec3 lp = position;
   lp.xz = mat2(cos(sp), -sin(sp), sin(sp), cos(sp)) * lp.xz;
@@ -249,7 +252,7 @@ vec3 pal(float h){
 }
 void main(){
   vec3 N = normalize(vN), V = normalize(cameraPosition - vW);
-  float ndv = abs(dot(N, V)), fres = pow(1.0 - ndv, 2.5);
+  float ndv = abs(dot(N, V)), fres = pow(clamp(1.0 - ndv, 0.0, 1.0), 2.5);
   vec3 q = vW * 0.3;
   float field = sin(q.x * 1.3 + uTurn * 2.2 + uTime * 0.06) + sin(q.y * 1.6 - q.z * 0.9 + uTurn * 1.4) + sin((q.x + q.z) * 0.9 - uTime * 0.05) * 0.8;
   float h = field * 0.2 + ndv * 0.35 + vSeed * 0.08 + uTurn * 0.25;
@@ -299,8 +302,8 @@ const floorMat = new THREE.ShaderMaterial({ transparent: true, depthWrite: false
   vertexShader: `varying vec3 vW; void main(){ vec4 w = modelMatrix*vec4(position,1.0); vW = w.xyz; gl_Position = projectionMatrix*viewMatrix*w; }`,
   fragmentShader: `uniform float uTime, uTurn, uInside, uFlick; varying vec3 vW;
   void main(){
-    float r = length(vW.xz), a = atan(vW.z, vW.x);
-    float rays = pow(0.5 + 0.5*sin(a*11.0 + sin(a*5.0)*1.5 + uTurn*0.6 + uTime*0.05), 5.0) * 0.7 + pow(0.5 + 0.5*sin(a*6.0 - 1.3 - uTime*0.04), 9.0) * 0.8;
+    float r = length(vW.xz), a = atan(vW.z, vW.x + 1e-4);
+    float rays = pow(clamp(0.5 + 0.5*sin(a*11.0 + sin(a*5.0)*1.5 + uTurn*0.6 + uTime*0.05), 0.0, 1.0), 5.0) * 0.7 + pow(clamp(0.5 + 0.5*sin(a*6.0 - 1.3 - uTime*0.04), 0.0, 1.0), 9.0) * 0.8;
     float fall = exp(-max(r - 2.5, 0.0) * 0.28);
     vec3 c1 = vec3(1.0, 0.6, 0.35), c2 = vec3(1.0, 0.45, 0.6), c3 = vec3(0.7, 0.6, 1.0);
     vec3 tint = mix(mix(c1, c2, 0.5 + 0.5*sin(a*2.0 + uTurn)), c3, 0.35 + 0.35*sin(a*3.0 - 0.7));
@@ -630,8 +633,8 @@ function drawHands(now) {
     for (let i = 1; i < n; i++) { hctx.beginPath(); hctx.arc(a.x + (b.x - a.x) * i / n, a.y + (b.y - a.y) * i / n, 2 * dpr, 0, 7); hctx.fill(); }
   }
   if (hint) {
-    const top = pts.reduce((m, q) => (q.y > m.y ? q : m), pts[0]), fs = 17 * dpr;
-    hctx.font = `500 ${fs}px Inter, system-ui, sans-serif`;
+    const top = pts.reduce((m, q) => (q.y > m.y ? q : m), pts[0]), fs = 12 * dpr;
+    hctx.font = `500 ${fs}px Montserrat, system-ui, sans-serif`;
     const w = hctx.measureText(hint).width + fs * 1.4, h = fs * 2;
     const bx = clamp(top.x - w / 2, 8 * dpr, W - w - 8 * dpr), by = Math.min(H - h - 8 * dpr, top.y + 48 * dpr);
     hctx.fillStyle = 'rgba(30,14,22,0.72)'; hctx.beginPath(); hctx.roundRect(bx, by, w, h, h / 2); hctx.fill();
