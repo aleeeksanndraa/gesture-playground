@@ -24,6 +24,6 @@ export const CONFIG = {
   // Online without the laptop server (GitHub Pages + a free Supabase project, see supabase.sql).
   // Leave empty to use the Node server. The anon key is public by design; never put the
   // service_role key here.
-  supabaseUrl: '',
-  supabaseAnonKey: '',
+  supabaseUrl: 'https://womszzwdplrckbzotvkl.supabase.co',
+  supabaseAnonKey: 'sb_publishable_HrheXia4L5hAMunIAmOGHw_e2Uvy5AN',
 };
