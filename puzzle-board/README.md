@@ -47,8 +47,8 @@ puzzle pieces that hovers above a glossy floor in a warm haze. Low down the puzz
 assembled; higher up pieces come loose, tilt away and drift around it, and the whole thing keeps
 gently gathering itself. Every piece of home lights up one puzzle piece (the front wall fills first).
 The light is iridescent, amber, coral, rose, violet and a little blue, and it shifts as you turn the
-house. Step inside and the newest 28 pieces float around you as glowing puzzle pieces with clear
-photos.
+house. Step inside and the walls hold still: every photo sits sharp on its puzzle piece in the walls
+around you, lit by a flickering, fire-like light.
 
 | | What it does |
 | --- | --- |

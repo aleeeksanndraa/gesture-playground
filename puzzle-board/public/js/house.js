@@ -107,12 +107,12 @@ const slots = [];
       if (y > HOUSE_H) break;
       if (y > HW && Math.abs(x) + P * 0.3 > (W / 2) * (1 - (y - HW) / R)) continue;
       if (side === 1 && Math.abs(x) < P && y < 2.3) continue;     // the door
-      add(v3(x * side, y, side * D / 2), v3(0, 0, side), (side === 1 ? 0 : 3000) + Math.hypot(x, (y - 1.8) * 1.3) * 10);
+      add(v3(x * side, y, side * D / 2), v3(0, 0, side), (y > HW ? 3000 : 0) + Math.abs(y - 1.7) * 13 + Math.abs(x) * 2 + (side === 1 ? 0 : 3));
     }
   }
   for (const side of [1, -1]) for (let c = 0; c < deep; c++) for (let r = 0; r < rows; r++) {   // side walls
     const z = -D / 2 + P / 2 + c * P, y = P / 2 + r * P;
-    add(v3(side * W / 2, y, z), v3(side, 0, 0), 1000 + (side === 1 ? 0 : 1000) + Math.hypot(z, y - 1.8) * 10);
+    add(v3(side * W / 2, y, z), v3(side, 0, 0), Math.abs(y - 1.7) * 13 + Math.abs(z) * 2 + (side === 1 ? 1 : 2));
   }
   const L = Math.hypot(W / 2, R), along = Math.round(L / P);
   for (const side of [1, -1]) {                                   // roof slopes
@@ -189,14 +189,14 @@ slots.forEach((s, i) => {
 });
 
 // Photo atlas: each piece shows its photo as soft light (the glass is frosted).
-const ATLAS = 2048, CELL = 64, PER = ATLAS / CELL;
+const ATLAS = 4096, CELL = 128, PER = ATLAS / CELL;   // 1024 pieces, sharp enough to read from inside
 const atlasCanvas = document.createElement('canvas'); atlasCanvas.width = atlasCanvas.height = ATLAS;
 const actx = atlasCanvas.getContext('2d'); actx.fillStyle = '#000'; actx.fillRect(0, 0, ATLAS, ATLAS);
 const atlasTex = new THREE.CanvasTexture(atlasCanvas);
 atlasTex.colorSpace = THREE.SRGBColorSpace; atlasTex.generateMipmaps = true; atlasTex.minFilter = THREE.LinearMipmapLinearFilter;
 // a sharper atlas for the floating cards inside (the latest pieces only)
-const CELL2 = 128, PER2 = ATLAS / CELL2;
-const cardCanvas = document.createElement('canvas'); cardCanvas.width = cardCanvas.height = ATLAS;
+const CELL2 = 128, PER2 = 2048 / CELL2;
+const cardCanvas = document.createElement('canvas'); cardCanvas.width = cardCanvas.height = 2048;
 const cctx = cardCanvas.getContext('2d');
 const cardTex = new THREE.CanvasTexture(cardCanvas);
 cardTex.colorSpace = THREE.SRGBColorSpace; cardTex.minFilter = THREE.LinearMipmapLinearFilter; cardTex.anisotropy = 4;
@@ -260,8 +260,9 @@ void main(){
   float alpha = 0.11;
   if (has > 0.5) {
     vec2 cell = vec2(mod(vCell, uPer), uPer - 1.0 - floor(vCell / uPer));
-    vec3 photo = texture2D(uAtlas, (cell + clamp(vUv, 0.04, 0.96)) / uPer, uBlur).rgb;
-    col = mix(iri * 0.7, photo * 1.1 * mix(vec3(1.0), iri, 0.35), uPhoto) + iri * 0.22 * uSolid;
+    vec2 fuv = gl_FrontFacing ? vUv : vec2(1.0 - vUv.x, vUv.y);   // read the right way round from inside too
+    vec3 photo = texture2D(uAtlas, (cell + clamp(fuv, 0.04, 0.96)) / uPer, uBlur).rgb;
+    col = mix(iri * 0.7, photo * 1.1 * mix(vec3(1.0), iri, 0.35), uPhoto) + iri * 0.1 * uSolid;
     alpha = mix(0.34, 0.88, uSolid);
   }
   // firelight: the lamp flickers, and small flames run up through the pieces
@@ -410,7 +411,7 @@ function frameCamera(dt) {
   camera.position.y = Math.max(0.25, camera.position.y);
   const look = center.clone().lerp(eye.clone().addScaledVector(dir, -5).setY(eye.y + view.pitch * -2), ease);
   camera.lookAt(look);
-  camera.fov = lerp(40, 72, ease); camera.updateProjectionMatrix();
+  camera.fov = lerp(40, 62, ease); camera.updateProjectionMatrix();
   uniforms.uInside.value = ease;
   const v = $('#view'), ins = e > 0.5;
   if (v.classList.contains('inside') !== ins) { v.classList.toggle('inside', ins); v.textContent = ins ? 'Inside the house' : 'Outside view'; }
@@ -436,23 +437,10 @@ function frame(now) {
   const flick = 1 + 0.07 * Math.sin(t * 8.1) + 0.05 * Math.sin(t * 13.7 + 1) + 0.06 * Math.sin(t * 3.3 + 2) + 0.04 * Math.sin(t * 21.3);
   uniforms.uFlick.value = flick; floorMat.uniforms.uFlick.value = flick;
   lampGlow.scale.setScalar(6 * (0.85 + 0.15 * flick));
-  // inside, the memories rise around you in a slow spiral, like sparks over a fire, and fade at the top
-  const n = F.g.instanceCount, cq = new THREE.Quaternion(), m4 = new THREE.Matrix4(), Y = new THREE.Vector3(0, 1, 0), mid = new THREE.Vector3(0, 1.5, 0);
-  for (let i = 0; i < n; i++) {
-    const s = F.seed[i], ph = (s + i / Math.max(n, 1) + t * 0.02) % 1;
-    const a = i * 2.39996 + t * 0.06 + ph * 2.2, ring = 1.95 + 0.25 * Math.sin(i * 1.7 + t * 0.3);
-    const x = Math.cos(a) * ring * 1.25, y = 0.15 + ph * 3.7, z = Math.sin(a) * ring * 0.9;
-    F.off[i * 3] = x; F.off[i * 3 + 1] = y; F.off[i * 3 + 2] = z;
-    F.fade[i] = clamp(ph / 0.12, 0, 1) * clamp((1 - ph) / 0.18, 0, 1);
-    // face the middle of the room, swaying a little as they rise
-    m4.lookAt(mid, new THREE.Vector3(x, y, z), Y);
-    cq.setFromRotationMatrix(m4).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.sin(t * 0.6 + s * 7) * 0.15, Math.sin(t * 0.4 + s * 5) * 0.2, Math.sin(t * 0.7 + s * 10) * 0.25)));
-    F.quat.set([cq.x, cq.y, cq.z, cq.w], i * 4);
-  }
-  F.g.attributes.aOff.needsUpdate = true; F.g.attributes.aQuat.needsUpdate = true; F.g.attributes.aFade.needsUpdate = true;
-    cardMat.uniforms.uFade.value = clamp((ease - 0.45) / 0.45, 0, 1);
-  cards.visible = cardMat.uniforms.uFade.value > 0.01;
-  uniforms.uFade.value = 1 - ease * 0.6;
+  // inside, the walls hold still and their photos come into focus
+  cards.visible = false;
+  uniforms.uScatter.value = 1 - ease;
+  uniforms.uBlur.value = lerp(1.6, 0.0, ease); uniforms.uPhoto.value = lerp(0.55, 0.92, ease); uniforms.uSolid.value = ease * 0.85;
   lampGlow.material.opacity = roofGlow.material.opacity = 1 - ease;
   dustMat.uniforms.uScale.value *= 1 - ease * 0.6;
   compMat.uniforms.uBloom.value = lerp(1.1, 0.8, ease);
@@ -711,7 +699,7 @@ function homeScene(size = 256) {
   }
   // camera softness and grain
   const o = document.createElement('canvas'); o.width = o.height = S; const ox = o.getContext('2d');
-  ox.filter = `blur(${S * 0.008}px) saturate(1.1) brightness(1.3)`; ox.drawImage(c, 0, 0);
+  ox.filter = `blur(${S * 0.008}px) saturate(1.1) brightness(1.12)`; ox.drawImage(c, 0, 0);
   const img = ox.getImageData(0, 0, S, S), d = img.data;
   for (let i = 0; i < d.length; i += 4) { const n = (Math.random() - 0.5) * 14; d[i] += n; d[i + 1] += n; d[i + 2] += n; }
   ox.putImageData(img, 0, 0);
