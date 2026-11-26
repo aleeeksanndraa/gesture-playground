@@ -587,7 +587,6 @@ function setHover(h) {
   if (p) setCaption(`Piece ${p.slot + 1} · ${p.demo ? 'test photo' : timeAgo(p.t)}`);
   else setCaption('An empty spot · scan the code to light it up');
   $('#qrbox').classList.toggle('call', !p);
-  if (pointerSource === 'hand' && p && performance.now() - dwell.t > 900 && $('#focus').hidden) openFocus(p);
 }
 function timeAgo(t) {
   if (!t) return 'added by a visitor';
@@ -665,41 +664,72 @@ async function initHands() {
     $('#cambubble').hidden = false;
   } catch (err) { console.warn('Hand tracking off:', err); }
 }
+// Hand moves
+//  outside  · open hand sweeps through the house: the pieces blow away and drift back
+//           · fist: hold and turn the house
+//           · two open hands, backs together, then spread apart: open the house and step in
+//  inside   · one hand (the left one when there are two) moves the view: open hand or fist, just move it
+//           · the other open hand is a cursor on the walls; close it on a photo to step into that memory
+//           · bring both open palms together: step back out (from a photo first, then from the house)
+let twoHist = [];
 function onHands(tr, now, G) {
   onHands.G = G;
   tracks = tr.filter(t => !t.lost);
   const next = new Map(tracks.map(t => [t.id, { ...toScreen(t), t: now }]));
   const isFist = t => t.gesture === G.FIST || t.gesture === G.PINCH || t.gesture === G.THUMBS;
-  const isPoint = t => t.gesture === G.POINT;
-  let mode = null; hint = '';
-  const two = tracks.slice(0, 2);
-  if (two.length === 2 && !two.some(isPoint)) {
+  const isOpen = t => t.gesture === G.OPEN;
+  const inside = view.insideT > 0.5;
+  let mode = null, cursor = null; hint = '';
+  const two = tracks.slice(0, 2).sort((a, b) => next.get(a.id).x - next.get(b.id).x);   // left, right on screen
+
+  // two open hands: watch how far apart they are over the last 1.5 s
+  if (two.length === 2 && two.every(isOpen)) {
+    const [a, b] = two.map(t => next.get(t.id));
+    twoHist.push({ t: now, d: Math.hypot(a.x - b.x, a.y - b.y) });
+  } else twoHist.length = 0;
+  twoHist = twoHist.filter(h => now - h.t < 1500);
+  if (twoHist.length > 2) {
+    const d = twoHist[twoHist.length - 1].d, lo = Math.min(...twoHist.map(h => h.d)), hi = Math.max(...twoHist.map(h => h.d));
+    if (!inside && lo < 0.17 && d > lo + 0.25) { view.insideT = 1; view.ipitch = 0; twoHist.length = 0; }        // backs together, spread: in
+    else if (inside && hi > 0.3 && d < 0.13) {                                                                       // palms together: out
+      if (!$('#focus').hidden) closeFocus(); else view.insideT = 0;
+      twoHist.length = 0;
+    }
     mode = 'step';
-    const [a, b] = two.map(t => next.get(t.id)), d = Math.hypot(a.x - b.x, a.y - b.y);
-    if (!stepStart) stepStart = { d };
-    const ch = (d - stepStart.d) / 0.25;
-    if (ch > 1 && view.insideT < 0.5) { view.insideT = 1; stepStart = { d }; }
-    else if (ch < -1 && view.insideT > 0.5) { view.insideT = 0; stepStart = { d }; }
-    hint = view.insideT > 0.5 ? 'bring hands together to step out' : 'move hands apart to step in';
-  } else {
-    stepStart = null;
-    const t = tracks.find(isFist) || tracks.find(isPoint) || tracks[0];
+    hint = inside ? 'palms together to step out' : 'spread your hands to step in';
+  }
+
+  if (!inside) {
+    const t = tracks.find(isFist) || tracks.find(isOpen) || tracks[0];
     if (t && isFist(t)) {
       mode = 'grab'; hint = 'holding · move to turn · open to let go';
       const c = next.get(t.id), p = prev.get(t.id);
       if (p) turn((c.x - p.x) * 5, (c.y - p.y) * 2.6);
       view.vyaw = 0;
-    } else if (t && isPoint(t)) {
-      mode = 'point'; hint = 'hold on a piece to open it';
-      const c = next.get(t.id); pointerSource = 'hand';
-      pointerNdc = new THREE.Vector2(c.x * 2 - 1, -(c.y * 2 - 1)); pointerMoved = true;
-    } else if (t) {
-      hint = view.insideT > 0.5 ? '✊ grab to look around · ☝️ point to pick' : '🖐 sweep to stir · ✊ grab to turn · ☝️ point';
-      const c = next.get(t.id), p = prev.get(t.id);   // an open hand sweeps the pieces aside
+    } else if (t && mode !== 'step') {
+      mode = 'stir'; hint = 'sweep through the house · two hands back to back, spread to step in';
+      const c = next.get(t.id), p = prev.get(t.id);   // an open hand blows the pieces aside
       if (p) { projectPieces(); pushAt(p.x * innerWidth, p.y * innerHeight, c.x * innerWidth, c.y * innerHeight); }
     }
+  } else {
+    // inside: with two hands the left one steers and the right one points; with one hand it points, and a fist steers
+    const steer = two.length === 2 ? two[0] : (tracks[0] && isFist(tracks[0]) && !(hover && hover.slot != null && tracks[0].changed) ? tracks[0] : null);
+    const aim = two.length === 2 ? two[1] : (tracks[0] && tracks[0] !== steer ? tracks[0] : null);
+    if (steer) {
+      const c = next.get(steer.id), p = prev.get(steer.id);
+      if (p) turn((c.x - p.x) * 4, (c.y - p.y) * 2.4);
+      view.vyaw = 0; mode = 'grab';
+    }
+    if (aim) {
+      const c = next.get(aim.id); cursor = c; pointerSource = 'hand';
+      pointerNdc = new THREE.Vector2(c.x * 2 - 1, -(c.y * 2 - 1)); pointerMoved = true;
+      // closing the aiming hand on a photo steps into it
+      if (isFist(aim) && aim.changed && hover && hover.slot != null && $('#focus').hidden) openFocus(pieces.get(hover.slot));
+      mode = 'point';
+    }
+    hint = !$('#focus').hidden ? 'palms together to step back' : two.length === 2 ? 'left hand looks around · right hand: close on a photo to open it' : 'aim with your palm · close it on a photo · fist to look around';
   }
-  if (mode !== 'point' && pointerSource === 'hand') pointerNdc = null;
+  if (!cursor && pointerSource === 'hand') pointerNdc = null;
   prev = next;
   if (mode !== active) { active = mode; for (const el of document.querySelectorAll('#guide [data-g]')) el.classList.toggle('on', el.dataset.g === mode); }
 }
@@ -820,7 +850,7 @@ if (preview || new URLSearchParams(location.search).has('preview')) {
   preview = true;
   document.body.classList.add('preview');
   $('#qr').src = 'img/qr-preview.svg'; $('#url').textContent = 'preview · the board shows the real code';
-  const chips = { grab: 'Drag to turn · move to stir', step: 'Double-click to step in · scroll to look', point: 'Click a piece to open it' };
+  const chips = { stir: 'Move the mouse to stir · drag to turn', step: 'Double-click to step in · scroll to look', point: 'Click a piece to open it' };
   for (const [k, v] of Object.entries(chips)) $(`#guide [data-g="${k}"] span`).textContent = v;
   addDemoPieces(110);
 } else {

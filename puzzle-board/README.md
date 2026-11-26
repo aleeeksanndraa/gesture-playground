@@ -52,10 +52,13 @@ around you, lit by a flickering, fire-like light.
 
 | | What it does |
 | --- | --- |
-| ✊ grab and move | turn the house (inside: look around) |
-| 🙌 two hands apart / together | step inside, where the photos float around you / step back out |
-| ☝️ point | the cube under your finger lights up; hold on a piece to open it big, point at an empty spot and the QR code lights up |
-| mouse | drag to turn, scroll or double-click to step in and out, click a piece to open it |
+| 🖐 sweep an open hand (outside) | the pieces you pass blow away like in a wind and drift back into the house |
+| ✊ fist and move (outside) | turn the house |
+| 🙌 backs of the hands together, then spread | open the house and step inside |
+| one hand (inside) | moves the view; with two hands the left one steers |
+| 🖐 → ✊ the other hand (inside) | your palm is a cursor on the walls; close it on a photo to step into that memory |
+| 🙏 bring both palms together | step back out: from a photo first, then out of the house |
+| mouse | move to stir, drag to turn, scroll or double-click to step in, scroll inside to look up and down, click a piece to open it |
 | `I` or space | step in / out |
 | `X` / `Shift+X` | add 60 / 300 test pieces (only on screen) |
 
