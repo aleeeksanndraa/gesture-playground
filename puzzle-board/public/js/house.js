@@ -266,7 +266,7 @@ void main(){
     alpha = mix(0.34, 0.88, uSolid);
   }
   // firelight: the lamp flickers, and small flames run up through the pieces
-  float flame = 0.78 + 0.22 * sin(uTime * 7.3 - vW.y * 2.6 + vSeed * 9.0) * sin(uTime * 4.1 - vW.y * 1.7 + vW.x * 0.8 + vSeed * 3.0);
+  float flame = 0.92 + 0.08 * sin(uTime * 1.9 - vW.y * 1.6 + vSeed * 9.0) * sin(uTime * 1.2 - vW.y * 1.1 + vW.x * 0.6 + vSeed * 3.0);
   float shimmer = (0.9 + 0.1 * sin(uTime * 1.3 + vSeed * 20.0 + dot(vW, vec3(1.3, 0.7, 1.1)))) * flame * uFlick;
   col = mix(col, col * vec3(1.15, 0.92, 0.75), clamp((flame * uFlick - 0.95) * 3.0, 0.0, 1.0));
   col *= lamp * shimmer;
@@ -327,8 +327,8 @@ const dustMat = new THREE.ShaderMaterial({ transparent: true, depthWrite: false,
   vertexShader: `attribute float aSeed; uniform float uTime, uScale; varying float vA, vS;
     void main(){ vec3 p = position; p.y = mod(p.y + uTime * (0.08 + aSeed * 0.12), 10.0); p.x += sin(uTime*0.3 + aSeed*30.0)*0.4;
       vec4 mv = modelViewMatrix*vec4(p,1.0); gl_Position = projectionMatrix*mv; vS = aSeed;
-      vA = (0.3 + 0.7*sin(uTime*1.5 + aSeed*40.0)*0.5+0.35) * smoothstep(0.0, 1.5, p.y) * smoothstep(10.0, 7.0, p.y);
-      gl_PointSize = (4.0 + aSeed * 8.0) * uScale / -mv.z; }`,
+      vA = (0.55 + 0.2*sin(uTime*0.6 + aSeed*40.0)) * smoothstep(0.0, 1.5, p.y) * smoothstep(10.0, 7.0, p.y);
+      gl_PointSize = min((4.0 + aSeed * 8.0) * uScale / -mv.z, 7.0); vA *= smoothstep(2.0, 5.0, -mv.z); }`,
   fragmentShader: `varying float vA, vS; void main(){ float r = length(gl_PointCoord-0.5); if (r > 0.5) discard;
     vec3 c = mix(vec3(1.0,0.75,0.5), vec3(1.0,0.6,0.8), vS); gl_FragColor = vec4(c * smoothstep(0.5,0.0,r) * vA * 0.55, 1.0); }` });
 const dust = new THREE.Points(dustGeo, dustMat); dust.frustumCulled = false; dust.renderOrder = 6; world.add(dust);
@@ -434,9 +434,9 @@ function frame(now) {
   uniforms.uLift.value = (0.55 + Math.sin(t * 0.6) * 0.12) * (1 - ease);   // the house hovers above the floor
   lampGlow.position.y = 1.6 + uniforms.uLift.value; roofGlow.position.y = 5 + uniforms.uLift.value;
   // firelight flicker, shared by the pieces, the lamp and the floor
-  const flick = 1 + 0.07 * Math.sin(t * 8.1) + 0.05 * Math.sin(t * 13.7 + 1) + 0.06 * Math.sin(t * 3.3 + 2) + 0.04 * Math.sin(t * 21.3);
+  const flick = 1 + 0.035 * Math.sin(t * 2.3) + 0.025 * Math.sin(t * 3.7 + 1) + 0.015 * Math.sin(t * 5.1 + 2);
   uniforms.uFlick.value = flick; floorMat.uniforms.uFlick.value = flick;
-  lampGlow.scale.setScalar(6 * (0.85 + 0.15 * flick));
+  lampGlow.scale.setScalar(6);
   // inside, the walls hold still and their photos come into focus
   cards.visible = false;
   uniforms.uScatter.value = 1 - ease;
@@ -465,8 +465,12 @@ const outline = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(piec
   new THREE.LineDashedMaterial({ color: 0xffffff, transparent: true, opacity: 0.95, depthTest: false, dashSize: 0.035, gapSize: 0.025 }));
 outline.computeLineDistances();
 outline.visible = false; outline.renderOrder = 9; world.add(outline);
+let pointerMoved = true;
 function updateHover() {
   if (!pointerNdc) { setHover(null); return; }
+  // a resting pointer keeps its piece, so the highlight doesn't jump while the house moves
+  if (!pointerMoved && view.inside < 0.5) { if (hover) setHover(hover); return; }
+  pointerMoved = false;
   ray.setFromCamera(pointerNdc, camera);
   if (cards.visible) {
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), lift = uniforms.uLift.value;
@@ -493,7 +497,7 @@ function setHover(h) {
   uniforms.uHover.value = hover && hover.voxel != null ? hover.voxel : -1;
   cardMat.uniforms.uHover.value = hover && hover.card != null ? hover.card : -1;
   if (!hover) { outline.visible = false; $('#qrbox').classList.remove('call'); setCaption(''); return; }
-  if (hover.voxel != null) { outline.visible = true; const sl = slots[hover.voxel]; outline.position.copy(sl.pos).y += uniforms.uLift.value; outline.quaternion.copy(sl.rot); } else outline.visible = false;
+  if (hover.voxel != null && view.inside > 0.5) { outline.visible = true; const sl = slots[hover.voxel]; outline.position.copy(sl.pos).y += uniforms.uLift.value; outline.quaternion.copy(sl.rot); } else outline.visible = false;
   const p = hover.slot != null ? pieces.get(hover.slot) : null;
   if (p) setCaption(`Piece ${p.slot + 1} · ${p.demo ? 'test photo' : timeAgo(p.t)}`);
   else setCaption('An empty spot · scan the code to light it up');
@@ -527,7 +531,7 @@ let dragging = false, drag = null;
 canvas.addEventListener('pointerdown', e => { drag = { x: e.clientX, y: e.clientY, moved: 0 }; dragging = true; canvas.setPointerCapture(e.pointerId); });
 canvas.addEventListener('pointermove', e => {
   pointerSource = 'mouse';
-  pointerNdc = new THREE.Vector2(e.clientX / innerWidth * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  pointerNdc = new THREE.Vector2(e.clientX / innerWidth * 2 - 1, -(e.clientY / innerHeight) * 2 + 1); pointerMoved = true;
   if (!drag) return;
   const dx = e.clientX - drag.x, dy = e.clientY - drag.y; drag.x = e.clientX; drag.y = e.clientY; drag.moved += Math.abs(dx) + Math.abs(dy);
   turn(dx / innerWidth * 4, dy / innerHeight * 2.2);
@@ -598,7 +602,7 @@ function onHands(tr, now, G) {
     } else if (t && isPoint(t)) {
       mode = 'point'; hint = 'hold on a piece to open it';
       const c = next.get(t.id); pointerSource = 'hand';
-      pointerNdc = new THREE.Vector2(c.x * 2 - 1, -(c.y * 2 - 1));
+      pointerNdc = new THREE.Vector2(c.x * 2 - 1, -(c.y * 2 - 1)); pointerMoved = true;
     } else if (t) hint = '✊ grab to turn · ☝️ point to pick';
   }
   if (mode !== 'point' && pointerSource === 'hand') pointerNdc = null;
