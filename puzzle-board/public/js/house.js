@@ -682,25 +682,35 @@ function onHands(tr, now, G) {
   let mode = null, cursor = null; hint = '';
   const two = tracks.slice(0, 2).sort((a, b) => next.get(a.id).x - next.get(b.id).x);   // left, right on screen
 
-  // two open hands: watch how far apart they are over the last 1.5 s
-  if (two.length === 2 && two.every(isOpen)) {
+  // two hands, whatever their shape: watch how far apart they are over the last 1.5 s.
+  // In: backs of the hands together (hands curled, they often read as fists), then open them apart like curtains.
+  // Out: open palms apart, then pressed together; pressed palms often merge into one hand for the tracker.
+  if (two.length === 2) {
     const [a, b] = two.map(t => next.get(t.id));
     twoHist.push({ t: now, d: Math.hypot(a.x - b.x, a.y - b.y) });
-  } else twoHist.length = 0;
+  } else if (tracks.length === 1 && twoHist.length && now - twoHist[twoHist.length - 1].t < 350 && twoHist[twoHist.length - 1].d < 0.22) {
+    twoHist.push({ t: now, d: 0.05 });   // the two hands just merged into one: palms together
+  }
   twoHist = twoHist.filter(h => now - h.t < 1500);
+  let closing = false;
   if (twoHist.length > 2) {
     const d = twoHist[twoHist.length - 1].d, lo = Math.min(...twoHist.map(h => h.d)), hi = Math.max(...twoHist.map(h => h.d));
-    if (!inside && lo < 0.17 && d > lo + 0.25) { view.insideT = 1; view.ipitch = 0; twoHist.length = 0; }        // backs together, spread: in
-    else if (inside && hi > 0.3 && d < 0.13) {                                                                       // palms together: out
+    const recent = twoHist.filter(h => now - h.t < 450);
+    closing = recent.length > 1 && recent[0].d - d > 0.08;
+    const loAt = twoHist.findIndex(h => h.d === lo), hiAt = twoHist.findIndex(h => h.d === hi);
+    if (!inside && lo < 0.2 && d > lo + 0.25 && loAt < twoHist.length - 1) { view.insideT = 1; view.ipitch = 0; twoHist.length = 0; }   // together, then apart: in
+    else if (inside && hi > 0.3 && d < 0.15 && hiAt < twoHist.length - 1) {                                                              // apart, then together: out
       if (!$('#focus').hidden) closeFocus(); else view.insideT = 0;
       twoHist.length = 0;
     }
+  }
+  if (two.length === 2 || closing) {
     mode = 'step';
-    hint = inside ? 'palms together to step out' : 'spread your hands to step in';
+    hint = inside ? 'press your palms together to step out' : 'backs of the hands together, then open them apart';
   }
 
   if (!inside) {
-    const t = tracks.find(isFist) || tracks.find(isOpen) || tracks[0];
+    const t = two.length === 2 ? null : (tracks.find(isFist) || tracks.find(isOpen) || tracks[0]);
     if (t && isFist(t)) {
       mode = 'grab'; hint = 'holding · move to turn · open to let go';
       const c = next.get(t.id), p = prev.get(t.id);
@@ -711,7 +721,7 @@ function onHands(tr, now, G) {
       const c = next.get(t.id), p = prev.get(t.id);   // an open hand blows the pieces aside
       if (p) { projectPieces(); pushAt(p.x * innerWidth, p.y * innerHeight, c.x * innerWidth, c.y * innerHeight); }
     }
-  } else {
+  } else if (!closing) {
     // inside: with two hands the left one steers and the right one points; with one hand it points, and a fist steers
     const steer = two.length === 2 ? two[0] : (tracks[0] && isFist(tracks[0]) && !(hover && hover.slot != null && tracks[0].changed) ? tracks[0] : null);
     const aim = two.length === 2 ? two[1] : (tracks[0] && tracks[0] !== steer ? tracks[0] : null);

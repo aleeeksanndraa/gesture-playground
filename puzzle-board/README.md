@@ -54,10 +54,10 @@ around you, lit by a flickering, fire-like light.
 | --- | --- |
 | 🖐 sweep an open hand (outside) | the pieces you pass blow away like in a wind and drift back into the house |
 | ✊ fist and move (outside) | turn the house |
-| 🙌 backs of the hands together, then spread | open the house and step inside |
+| 🙌 backs of the hands together, then open them apart like curtains | open the house and step inside |
 | one hand (inside) | moves the view; with two hands the left one steers |
 | 🖐 → ✊ the other hand (inside) | your palm is a cursor on the walls; close it on a photo to step into that memory |
-| 🙏 bring both palms together | step back out: from a photo first, then out of the house |
+| 🙏 open palms apart, then press them together | step back out: from a photo first, then out of the house |
 | mouse | move to stir, drag to turn, scroll or double-click to step in, scroll inside to look up and down, click a piece to open it |
 | `I` or space | step in / out |
 | `X` / `Shift+X` | add 60 / 300 test pieces (only on screen) |
