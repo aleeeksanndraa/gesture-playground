@@ -56,8 +56,13 @@
   <div class="cam" id="cambubble" hidden><video id="cam" playsinline muted></video><span>Hand camera</span></div>
 
   <div class="focus" id="focus" hidden>
-    <canvas width="512" height="512"></canvas>
+    <div class="focus-art"><canvas width="512" height="512"></canvas><canvas id="focusInk" width="512" height="512" hidden></canvas></div>
     <p id="focusText"></p>
+  </div>
+
+  <div class="spot" id="spot" hidden>
+    <img id="spotQr" alt="QR code for this place">
+    <div><b>Scan to fill this place</b><span id="spotNum"></span></div>
   </div>
 
   <div class="pill offline" id="offline" hidden>Reconnecting to the server…</div>

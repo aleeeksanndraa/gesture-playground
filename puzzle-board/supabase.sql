@@ -7,6 +7,10 @@ create table if not exists public.pieces (
   path text not null check (length(path) < 200),
   created_at timestamptz not null default now()
 );
+-- what the photo is about (people, animal, food, ...) and the place in the house it asked for
+alter table public.pieces add column if not exists topic text check (topic is null or length(topic) < 20);
+alter table public.pieces add column if not exists slot int check (slot is null or slot between 0 and 100000);
+alter table public.pieces add column if not exists redraw boolean not null default false;
 alter table public.pieces enable row level security;
 drop policy if exists "pieces are public" on public.pieces;
 create policy "pieces are public" on public.pieces for select to anon using (true);
