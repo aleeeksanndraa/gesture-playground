@@ -406,17 +406,17 @@ const _tp = new THREE.Vector3();
 
 // Threads: when the house comes apart, thin coloured threads tie together the pieces whose photos
 // share a topic (people, animals, food, places ...). Each thread follows its two pieces as they drift.
-const SEG = 8, MAXC = 900;
+const SEG = 8, MAXC = 2000;
 const TV = MAXC * SEG * 2;
 const thr = { oa: new Float32Array(TV * 3), ob: new Float32Array(TV * 3), da: new Float32Array(TV * 3), db: new Float32Array(TV * 3),
-  sl: new Float32Array(TV * 4), t: new Float32Array(TV), col: new Float32Array(TV * 3), pairs: [] };
+  sl: new Float32Array(TV * 4), t: new Float32Array(TV), col: new Float32Array(TV * 3), base: new Float32Array(TV), pairs: [] };
 const thrGeo = new THREE.BufferGeometry();
 thrGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(TV * 3), 3));
 thrGeo.setAttribute('aOffA', new THREE.BufferAttribute(thr.oa, 3)); thrGeo.setAttribute('aOffB', new THREE.BufferAttribute(thr.ob, 3));
 thrGeo.setAttribute('aDispA', new THREE.BufferAttribute(thr.da, 3).setUsage(THREE.DynamicDrawUsage));
 thrGeo.setAttribute('aDispB', new THREE.BufferAttribute(thr.db, 3).setUsage(THREE.DynamicDrawUsage));
 thrGeo.setAttribute('aSL', new THREE.BufferAttribute(thr.sl, 4)); thrGeo.setAttribute('aT', new THREE.BufferAttribute(thr.t, 1));
-thrGeo.setAttribute('aCol', new THREE.BufferAttribute(thr.col, 3));
+thrGeo.setAttribute('aCol', new THREE.BufferAttribute(thr.col, 3)); thrGeo.setAttribute('aBase', new THREE.BufferAttribute(thr.base, 1));
 thrGeo.setDrawRange(0, 0);
 const centerGLSL = `
 uniform float uTime, uScatter, uLift;
@@ -436,7 +436,7 @@ vec3 pieceCenter(vec3 o, float seed, float loose, vec3 disp, out float br, out f
 const thrMat = new THREE.ShaderMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
   uniforms: { uTime: uniforms.uTime, uScatter: uniforms.uScatter, uLift: uniforms.uLift, uShow: { value: 1 } },
   vertexShader: centerGLSL + `
-  attribute vec3 aOffA, aOffB, aDispA, aDispB, aCol; attribute vec4 aSL; attribute float aT;
+  attribute vec3 aOffA, aOffB, aDispA, aDispB, aCol; attribute vec4 aSL; attribute float aT, aBase;
   uniform float uShow; varying vec3 vCol; varying float vA;
   void main(){
     float brA, pfA, brB, pfB;
@@ -445,14 +445,14 @@ const thrMat = new THREE.ShaderMaterial({ transparent: true, depthWrite: false, 
     float len = length(b - a), arc = sin(3.14159 * aT);
     p.y -= arc * len * 0.12;                                                     // a thread sags a little
     p += vec3(sin(uTime * 0.6 + aSL.x * 20.0), 0.0, cos(uTime * 0.5 + aSL.z * 20.0)) * arc * 0.08;
-    float apart = clamp((brA + brB) * 1.6 + (pfA + pfB) * 0.9, 0.0, 1.0);        // brighter as the pieces come apart
-    vA = (0.2 + 0.8 * apart) * uScatter * uShow * (0.55 + 0.45 * arc);
+    float apart = clamp((brA + brB) * 1.2 + (pfA + pfB) * 1.4, 0.0, 1.0);        // brighter as the pieces come apart
+    vA = (aBase + (1.0 - aBase) * apart) * uScatter * uShow * (0.55 + 0.45 * arc);
     vCol = aCol;
     gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
   }`,
   fragmentShader: `varying vec3 vCol; varying float vA; void main(){ gl_FragColor = vec4(vCol * vA * 0.9, 1.0); }` });
 const threads = new THREE.LineSegments(thrGeo, thrMat); threads.frustumCulled = false; threads.renderOrder = 6; world.add(threads);
-let threadsDirty = 0;
+let threadsDirty = 0.001;
 function buildThreads() {
   const by = new Map();
   for (const p of pieces.values()) {
@@ -469,19 +469,31 @@ function buildThreads() {
       for (const [b] of near) { const k = a < b ? a + ':' + b : b + ':' + a; if (!seen.has(k)) { seen.add(k); pairs.push([a, b, topic]); } }
     }
   }
+  // every piece is also tied to its nearest neighbour by a faint thread you only see when they fly apart
+  for (let a = 0; a < N && pairs.length < MAXC; a++) {
+    let best = -1, bd = 1e9;
+    for (let b = 0; b < N; b++) {
+      if (b === a) continue;
+      const d = (H.off[a * 3] - H.off[b * 3]) ** 2 + (H.off[a * 3 + 1] - H.off[b * 3 + 1]) ** 2 + (H.off[a * 3 + 2] - H.off[b * 3 + 2]) ** 2;
+      if (d < bd && d > 0.2) { bd = d; best = b; }
+    }
+    const k = a < best ? a + ':' + best : best + ':' + a;
+    if (best >= 0 && bd < 4 && !seen.has(k)) { seen.add(k); pairs.push([a, best, null]); }
+  }
   pairs.length = Math.min(pairs.length, MAXC);
   const c = new THREE.Color();
   pairs.forEach(([a, b, topic], j) => {
-    c.set(topicOf(topic).color).convertSRGBToLinear();
+    if (topic) c.set(topicOf(topic).color).convertSRGBToLinear(); else c.setRGB(0.6, 0.42, 0.5);
+    const base = topic ? 0.12 : 0.0;
     for (let s = 0; s < SEG; s++) for (let e = 0; e < 2; e++) {
       const n = (j * SEG + s) * 2 + e;
       thr.oa.set(H.off.subarray(a * 3, a * 3 + 3), n * 3); thr.ob.set(H.off.subarray(b * 3, b * 3 + 3), n * 3);
       thr.sl.set([H.seed[a], H.loose[a], H.seed[b], H.loose[b]], n * 4);
-      thr.t[n] = (s + e) / SEG; c.toArray(thr.col, n * 3);
+      thr.t[n] = (s + e) / SEG; c.toArray(thr.col, n * 3); thr.base[n] = base;
     }
   });
   thr.pairs = pairs;
-  for (const name of ['aOffA', 'aOffB', 'aSL', 'aT', 'aCol']) thrGeo.attributes[name].needsUpdate = true;
+  for (const name of ['aOffA', 'aOffB', 'aSL', 'aT', 'aCol', 'aBase']) thrGeo.attributes[name].needsUpdate = true;
   thrGeo.setDrawRange(0, pairs.length * SEG * 2);
   updateThreadDisp();
 }
@@ -833,8 +845,12 @@ function openSpot(v) {
   spot.v = v;
   const url = phoneUrl + (phoneUrl.includes('?') ? '&' : '?') + 'slot=' + v;
   $('#spotQr').src = api.qr(url); $('#spotNum').textContent = `Place ${v + 1}`;
-  $('#spot').hidden = false;
-  const sl = slots[v]; outline.visible = true; outline.position.copy(sl.pos).y += uniforms.uLift.value; outline.quaternion.copy(sl.rot);
+  // the piece leaves the wall and comes towards you, then opens with the code inside
+  const sl = slots[v], at = sl.pos.clone(); at.y += uniforms.uLift.value; at.project(camera);
+  const sp = $('#spot .spot-piece');
+  sp.style.setProperty('--fx', `${(at.x * 0.5) * innerWidth}px`); sp.style.setProperty('--fy', `${(-at.y * 0.5) * innerHeight - innerHeight * 0.08}px`);
+  sp.classList.remove('come'); void sp.offsetWidth; sp.classList.add('come');
+  $('#spot').hidden = false; outline.visible = true; outline.position.copy(sl.pos).y += uniforms.uLift.value; outline.quaternion.copy(sl.rot);
   uniforms.uHover.value = v;
   clearTimeout(spot.timer); spot.timer = setTimeout(closeSpot, 60000);
 }
