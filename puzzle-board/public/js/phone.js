@@ -3,6 +3,7 @@
 import { CONFIG } from './config.js';
 import { api } from './api.js';
 import { TOPICS } from './topics.js';
+import { guessTopic, warmUp } from './classify.js';
 
 const $ = s => document.querySelector(s);
 const params = new URLSearchParams(location.search);
@@ -93,18 +94,24 @@ function loadPhoto(file) {
 async function setPhoto(file) {
   if (!file) return;
   try {
-    state.img = await loadPhoto(file); state.panX = state.panY = 0;
+    state.img = await loadPhoto(file); state.panX = state.panY = 0; state.picked = false;
     $('#chooseBtn').hidden = true; $('#send').hidden = false; $('#changeBtn').hidden = false; $('#topics').hidden = false;
     $('#hint').textContent = 'Drag the photo to choose what shows';
+    $('#topicLabel').textContent = 'Looking at your photo…';
+    const img = state.img, t = await guessTopic(square(320));
+    if (state.img === img && t && !state.picked) setTopic(t);
+    $('#topicLabel').textContent = t && !state.picked ? 'Looks like this · tap to change' : 'What is it?';
   } catch (e) { toast(e.message); }
 }
 for (const id of ['#photoIn', '#photoIn2']) $(id).addEventListener('change', e => { setPhoto(e.target.files[0]); e.target.value = ''; });
 
-// ---------- topic ----------
+// ---------- topic: guessed from the photo, the visitor can change it ----------
+function setTopic(id) { state.topic = id; for (const c of document.querySelectorAll('.chip')) c.classList.toggle('on', c.dataset.t === id); }
 for (const t of TOPICS) {
   const b = document.createElement('button'); b.className = 'chip'; b.style.setProperty('--c', t.color);
   b.innerHTML = `<i></i>${t.label}`;
-  b.addEventListener('click', () => { state.topic = state.topic === t.id ? null : t.id; for (const c of document.querySelectorAll('.chip')) c.classList.toggle('on', c === b && state.topic === t.id); });
+  b.dataset.t = t.id;
+  b.addEventListener('click', () => { state.picked = true; setTopic(state.topic === t.id ? null : t.id); $('#topicLabel').textContent = 'What is it?'; });
   $('#chips').append(b);
 }
 
@@ -122,7 +129,7 @@ $('#send').addEventListener('click', async () => {
   } finally { btn.disabled = false; document.body.classList.remove('sending'); }
 });
 $('#again').addEventListener('click', () => {
-  state.img = null; state.topic = null;
+  state.img = null; state.topic = null; state.picked = false;
   for (const c of document.querySelectorAll('.chip')) c.classList.remove('on');
   $('#chooseBtn').hidden = false; $('#send').hidden = true; $('#changeBtn').hidden = true; $('#topics').hidden = true;
   $('#hint').textContent = 'A photo of something that feels like home';
@@ -138,3 +145,4 @@ async function count() {
 }
 count();
 show('pick');
+warmUp();   // load the photo classifier while they choose
