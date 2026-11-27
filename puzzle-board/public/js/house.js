@@ -437,7 +437,7 @@ const thrMat = new THREE.ShaderMaterial({ transparent: true, depthWrite: false, 
   uniforms: { uTime: uniforms.uTime, uScatter: uniforms.uScatter, uLift: uniforms.uLift, uShow: { value: 1 } },
   vertexShader: centerGLSL + `
   attribute vec3 aOffA, aOffB, aDispA, aDispB, aCol; attribute vec4 aSL; attribute float aT, aBase;
-  uniform float uShow; varying vec3 vCol; varying float vA;
+  uniform float uShow; varying vec3 vCol; varying float vA, vT, vS;
   void main(){
     float brA, pfA, brB, pfB;
     vec3 a = pieceCenter(aOffA, aSL.x, aSL.y, aDispA, brA, pfA), b = pieceCenter(aOffB, aSL.z, aSL.w, aDispB, brB, pfB);
@@ -447,12 +447,17 @@ const thrMat = new THREE.ShaderMaterial({ transparent: true, depthWrite: false, 
     p += vec3(sin(uTime * 0.6 + aSL.x * 20.0), 0.0, cos(uTime * 0.5 + aSL.z * 20.0)) * arc * 0.08;
     float apart = clamp((brA + brB) * 1.2 + (pfA + pfB) * 1.4, 0.0, 1.0);        // brighter as the pieces come apart
     vA = (aBase + (1.0 - aBase) * apart) * uScatter * uShow * (0.55 + 0.45 * arc);
-    vCol = aCol;
+    vCol = aCol; vT = aT; vS = aSL.x + aSL.z;
     gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
   }`,
-  fragmentShader: `varying vec3 vCol; varying float vA; void main(){ gl_FragColor = vec4(vCol * vA * 0.9, 1.0); }` });
+  fragmentShader: `uniform float uTime; varying vec3 vCol; varying float vA, vT, vS;
+  void main(){
+    float ends = smoothstep(0.0, 0.25, vT) * smoothstep(1.0, 0.75, vT);                     // fades out towards the pieces
+    float glow = 0.55 + 0.45 * sin(vT * 14.0 - uTime * 1.6 + vS * 30.0);                     // a soft light travelling along it
+    gl_FragColor = vec4(vCol * vA * ends * glow * 0.45, 1.0); }` });
 const threads = new THREE.LineSegments(thrGeo, thrMat); threads.frustumCulled = false; threads.renderOrder = 6; world.add(threads);
 let threadsDirty = 0.001;
+const best0 = b => b * 0.013;
 function buildThreads() {
   const by = new Map();
   for (const p of pieces.values()) {
@@ -483,7 +488,7 @@ function buildThreads() {
   pairs.length = Math.min(pairs.length, MAXC);
   const c = new THREE.Color();
   pairs.forEach(([a, b, topic], j) => {
-    if (topic) c.set(topicOf(topic).color).convertSRGBToLinear(); else c.setRGB(0.6, 0.42, 0.5);
+    if (topic) c.set(topicOf(topic).color).convertSRGBToLinear(); else c.setHSL((0.9 + hash(a * 0.37 + best0(b)) * 0.55) % 1, 0.85, 0.62);   // every thread its own soft hue
     const base = topic ? 0.12 : 0.0;
     for (let s = 0; s < SEG; s++) for (let e = 0; e < 2; e++) {
       const n = (j * SEG + s) * 2 + e;
