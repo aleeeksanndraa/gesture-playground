@@ -183,7 +183,7 @@ const pieceGeo = puzzleGeometry(P * 0.9, 0.035);
 function makeInstanced(base, n) {
   const g = new THREE.InstancedBufferGeometry().copy(base);
   const at = (name, size) => { const a = new Float32Array(n * size); g.setAttribute(name, new THREE.InstancedBufferAttribute(a, size)); return a; };
-  return { g, off: at('aOff', 3), quat: at('aQuat', 4), cell: at('aCell', 1).fill(-1), birth: at('aBirth', 1).fill(-100), seed: at('aSeed', 1), loose: at('aLoose', 1), fade: at('aFade', 1).fill(1), disp: at('aDisp', 3) };
+  return { g, off: at('aOff', 3), quat: at('aQuat', 4), cell: at('aCell', 1).fill(-1), birth: at('aBirth', 1).fill(-100), seed: at('aSeed', 1), loose: at('aLoose', 1), fade: at('aFade', 1).fill(1), disp: at('aDisp', 3), fly: at('aFly', 3) };
 }
 const H = makeInstanced(pieceGeo, N);
 H.g.instanceCount = N;
@@ -211,9 +211,9 @@ const uniforms = {
   uBlur: { value: 1.6 }, uPhoto: { value: 0.55 }, uSolid: { value: 0 }, uFade: { value: 1 }, uLift: { value: 0.6 }, uScatter: { value: 1 }, uFlick: { value: 1 },
 };
 const glassVert = `
-attribute vec3 aOff, aDisp; attribute vec4 aQuat; attribute float aCell, aBirth, aSeed, aLoose, aFade;
+attribute vec3 aOff, aDisp, aFly; attribute vec4 aQuat; attribute float aCell, aBirth, aSeed, aLoose, aFade;
 uniform float uMirror, uTime, uSize, uLift, uScatter; 
-varying vec3 vW, vN; varying vec2 vUv; varying float vCell, vBirth, vSeed, vId, vEdge, vLoose, vFade;
+varying vec3 vW, vN; varying vec2 vUv; varying float vCell, vBirth, vSeed, vId, vEdge, vLoose, vFade, vFly;
 vec3 rot(vec4 q, vec3 v){ return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v); }
 void main(){
   // loose pieces breathe and drift a little
@@ -222,19 +222,25 @@ void main(){
   // the house keeps coming apart and gathering again, in slow waves that roll up through it
   float wave = 0.5 + 0.5 * sin(uTime * 0.42 - aOff.y * 0.45 + aSeed * 1.2);
   float wave2 = 0.5 + 0.5 * sin(uTime * 0.17 + aOff.x * 0.25 + aSeed * 0.6);
-  float br = (pow(clamp(wave, 0.0, 1.0), 4.0) * (0.3 + aLoose) + pow(clamp(wave2, 0.0, 1.0), 8.0) * 0.6) * uScatter * 0.7;
+  float br = (pow(clamp(wave, 0.0, 1.0), 4.0) * (0.3 + aLoose) + pow(clamp(wave2, 0.0, 1.0), 8.0) * 0.6) * uScatter * 0.35;
   // pieces your hand (or the mouse) brushed past fly off and drift back (simulated on the CPU)
   vec3 push = aDisp * uScatter; float pf = length(push);
   float sp = (uTime * 0.25 + aSeed * 6.0) * k * step(0.78, aLoose) + br * (aSeed - 0.5) * 3.0 + pf * (aSeed - 0.5) * 2.2;
-  sp += sin(uTime * 0.2 + aSeed * 9.0) * 0.3 * uScatter;   // a slow tumble of each piece outside
-  vec3 lp = position * mix(1.0, 0.88, uScatter);            // smaller pieces, more air between them
+  sp += sin(uTime * 0.12 + aSeed * 9.0) * 0.18 * uScatter;   // a slow tumble of each piece outside
+  vec3 lp = position * mix(1.0, 0.8, uScatter);            // smaller pieces, more air between them
   lp.xz = mat2(cos(sp), -sin(sp), sin(sp), cos(sp)) * lp.xz;
   lp.yz = mat2(cos(br * aSeed), -sin(br * aSeed), sin(br * aSeed), cos(br * aSeed)) * lp.yz;
   vec3 outDir = normalize(aOff - vec3(0.0, 2.2, 0.0) + 1e-3);
   // outside the house loosens: it opens up and every piece wanders slowly on its own path
-  vec3 home = aOff + (aOff - vec3(0.0, 2.2, 0.0)) * 0.1 * uScatter;
-  vec3 wander = vec3(sin(uTime * 0.13 + aSeed * 17.0), sin(uTime * 0.11 + aSeed * 29.0) * 0.6, cos(uTime * 0.12 + aSeed * 11.0)) * 0.13 * uScatter;
-  vec3 p = rot(aQuat, lp) + home + wander + bob + (outDir * 1.0 + vec3(0.0, 0.45 + aSeed * 0.8, 0.0)) * br + push;
+  vec3 home = aOff + (aOff - vec3(0.0, 2.2, 0.0)) * 0.24 * uScatter;
+  vec3 wander = vec3(sin(uTime * 0.08 + aSeed * 17.0), sin(uTime * 0.07 + aSeed * 29.0) * 0.6, cos(uTime * 0.075 + aSeed * 11.0)) * 0.14 * uScatter;
+  // a new piece arrives like a falling star: from far away, tumbling, then it settles into its place
+  float age = uTime - aBirth, fl = age < 0.0 ? 0.0 : clamp(age / 2.6, 0.0, 1.0), ff = pow(1.0 - fl, 2.4) * step(0.0, aFly.y - 0.01);
+  float fs = ff * (9.0 + aSeed * 6.0);
+  lp.xy = mat2(cos(fs), -sin(fs), sin(fs), cos(fs)) * lp.xy;
+  lp.yz = mat2(cos(fs * 0.7), -sin(fs * 0.7), sin(fs * 0.7), cos(fs * 0.7)) * lp.yz;
+  vFly = ff;
+  vec3 p = rot(aQuat, lp) + home + wander + bob + (outDir * 1.0 + vec3(0.0, 0.45 + aSeed * 0.8, 0.0)) * br + push + aFly * ff;
   p.y += uLift;
   if (uMirror > 0.5) p.y = -p.y;
   vec4 w = modelMatrix * vec4(p, 1.0);
@@ -247,7 +253,7 @@ void main(){
 }`;
 const glassFrag = `
 uniform float uTime, uTurn, uPer, uMirror, uInside, uHover, uBlur, uPhoto, uFade, uSolid, uFlick; uniform vec3 uLight, uHearth; uniform sampler2D uAtlas;
-varying vec3 vW, vN; varying vec2 vUv; varying float vCell, vBirth, vSeed, vId, vEdge, vLoose, vFade;
+varying vec3 vW, vN; varying vec2 vUv; varying float vCell, vBirth, vSeed, vId, vEdge, vLoose, vFade, vFly;
 // warm iridescence: amber, peach, rose, lilac, a breath of sky blue
 vec3 pal(float h){
   h = fract(h) * 5.0;
@@ -266,38 +272,41 @@ void main(){
   vec3 iri = pal(h);
   float lamp = 0.6 + 0.45 * exp(-length(vW - uLight) * 0.3);        // the warm lamp inside the house
   float has = step(0.0, vCell);
-  vec3 col = iri * 0.75;
-  float alpha = 0.11;
+  vec3 col = iri * 0.22;          // an empty spot: a faint ghost of glass
+  float alpha = 0.03;
   if (has > 0.5) {
     vec2 cell = vec2(mod(vCell, uPer), uPer - 1.0 - floor(vCell / uPer));
     vec2 fuv = gl_FrontFacing ? vUv : vec2(1.0 - vUv.x, vUv.y);   // read the right way round from inside too
     vec3 photo = texture2D(uAtlas, (cell + clamp(fuv, 0.04, 0.96)) / uPer, uBlur).rgb;
-    col = mix(iri * 0.7, photo * 1.1 * mix(vec3(1.0), iri, 0.35), uPhoto) + iri * 0.1 * uSolid;
-    alpha = mix(0.34, 0.88, uSolid);
+    col = mix(iri * 0.7, photo * 0.62 * mix(vec3(1.0), iri, 0.12), uPhoto) + iri * 0.05 * uSolid;
+    alpha = mix(0.85, 0.95, uSolid);   // a filled piece: a clear, bright photo
+    col += vec3(1.0, 0.78, 0.55) * 0.05 * (1.0 - uSolid);
   }
   // firelight: the lamp flickers, and small flames run up through the pieces
   float flame = 0.92 + 0.08 * sin(uTime * 1.9 - vW.y * 1.6 + vSeed * 9.0) * sin(uTime * 1.2 - vW.y * 1.1 + vW.x * 0.6 + vSeed * 3.0);
   float shimmer = (0.9 + 0.1 * sin(uTime * 1.3 + vSeed * 20.0 + dot(vW, vec3(1.3, 0.7, 1.1)))) * flame * uFlick;
   col = mix(col, col * vec3(1.15, 0.92, 0.75), clamp((flame * uFlick - 0.95) * 3.0, 0.0, 1.0));
-  col *= lamp * shimmer;
+  col *= mix(lamp * shimmer, 0.85 + 0.15 * shimmer, has);   // photos keep their own colours
   // bright glassy rims where the light catches the edges and the bevel
   // a thin film of colour slides across every piece, plus a slow glint
   vec3 film = pal(h * 1.6 + vUv.x * 1.1 - vUv.y * 0.8 + ndv * 1.2 + uTime * 0.03);
-  col = mix(col, col * 0.55 + film * 0.6 * lamp, 0.5 * (1.0 - uSolid * 0.6));
+  col = mix(col, col * 0.55 + film * 0.6 * lamp, 0.5 * (1.0 - uSolid * 0.6) * (1.0 - has * 0.8));
   float glint = pow(clamp(sin((vUv.x + vUv.y) * 3.0 - uTime * 0.5 + vSeed * 6.0) * 0.5 + 0.5, 0.0, 1.0), 14.0);
-  col += film * glint * 0.3 * (1.0 - uSolid * 0.5);
+  col += film * glint * 0.3 * (1.0 - uSolid * 0.5) * (1.0 - has * 0.6);
   // inside: every piece shimmers like a soap bubble, warmed by a fire low by the back wall
   float th = vUv.x * 1.7 + vUv.y * 2.3 + sin(vUv.y * 5.0 + uTime * 0.35 + vSeed * 6.0) * 0.35 + ndv * 1.5 + uTime * 0.05;
   vec3 bub = 0.5 + 0.5 * cos(6.2832 * (th + vec3(0.0, 0.33, 0.67)));
-  col = mix(col, col * 0.78 + bub * 0.3 * lamp, 0.5 * uInside);
+  col = mix(col, col * 0.78 + bub * 0.3 * lamp, 0.5 * uInside * (1.0 - has * 0.75));
   col += bub * (fres * 0.5 + vEdge * 0.35) * 0.45 * uInside;
   float fire = (0.86 + 0.14 * sin(uTime * 2.1 + vW.y * 2.0) * sin(uTime * 3.3 + vW.x)) * uFlick;
   col *= mix(vec3(1.0), vec3(0.95, 0.74, 0.58), uInside);   // a dimmer, amber room
   col += vec3(1.0, 0.45, 0.14) * exp(-length(vW - uHearth) * 0.75) * 0.38 * fire * uInside * (0.5 + 0.5 * has);
   vec3 rim = pal(h + 0.3) * (fres * 0.45 + vEdge * 0.45) * lamp;
-  col += rim; alpha = max(alpha, vEdge * 0.3 + fres * 0.15);
+  rim *= mix(0.35, 0.7, has);
+  col += rim; alpha = max(alpha, (vEdge * 0.3 + fres * 0.15) * mix(0.35, 1.0, has));
   float age = uTime - vBirth;
-  col += vec3(1.0, 0.85, 0.7) * has * step(0.0, age) * exp(-max(age, 0.0) * 1.4) * 2.5;
+  col += vec3(1.0, 0.85, 0.7) * has * step(2.6, age) * exp(-max(age - 2.6, 0.0) * 1.8) * 0.7;   // a soft flash as it lands
+  col += vec3(1.0, 0.8, 0.6) * vFly * 2.5; alpha = max(alpha, vFly);                                 // bright while it falls
   if (abs(vId - uHover) < 0.5) { col = col * 1.5 + vec3(0.25, 0.2, 0.18); alpha = max(alpha, 0.75); }
   if (uMirror > 0.5) { col *= mix(0.38, 0.8, uInside) * exp(vW.y * mix(0.7, 0.2, uInside)); }
   alpha *= uFade * vFade;
@@ -357,6 +366,43 @@ const dustMat = new THREE.ShaderMaterial({ transparent: true, depthWrite: false,
     vec3 c = mix(vec3(1.0,0.75,0.5), vec3(1.0,0.6,0.8), vS); gl_FragColor = vec4(c * smoothstep(0.5,0.0,r) * vA * 0.55, 1.0); }` });
 const dust = new THREE.Points(dustGeo, dustMat); dust.frustumCulled = false; dust.renderOrder = 6; world.add(dust);
 
+// Falling-star trails behind pieces that are flying in (the same path as in the shader, sampled back in time).
+const flyers = [], TRAIL = 48, MAXT = 8;
+const tPos = new Float32Array(MAXT * TRAIL * 3), tA = new Float32Array(MAXT * TRAIL);
+const trailGeo = new THREE.BufferGeometry();
+trailGeo.setAttribute('position', new THREE.BufferAttribute(tPos, 3).setUsage(THREE.DynamicDrawUsage));
+trailGeo.setAttribute('aA', new THREE.BufferAttribute(tA, 1).setUsage(THREE.DynamicDrawUsage));
+const trailMat = new THREE.ShaderMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, uniforms: { uScale: { value: 1 } },
+  vertexShader: `attribute float aA; uniform float uScale; varying float vA;
+    void main(){ vec4 mv = modelViewMatrix * vec4(position, 1.0); gl_Position = projectionMatrix * mv; vA = aA;
+      gl_PointSize = clamp((2.0 + aA * 10.0) * uScale / -mv.z, 1.0, 26.0); }`,
+  fragmentShader: `varying float vA; void main(){ float r = length(gl_PointCoord - 0.5); if (r > 0.5 || vA <= 0.0) discard;
+    vec3 c = mix(vec3(1.0, 0.55, 0.75), vec3(1.0, 0.92, 0.8), vA); gl_FragColor = vec4(c * smoothstep(0.5, 0.0, r) * vA, 1.0); }` });
+const trail = new THREE.Points(trailGeo, trailMat); trail.frustumCulled = false; trail.renderOrder = 7; world.add(trail);
+function flyPos(v, age, out) {
+  const fl = clamp(age / 2.6, 0, 1), ff = (1 - fl) ** 2.4, e = 0.24 * uniforms.uScatter.value;
+  const o = H.off, i = v * 3;
+  return out.set(o[i] + o[i] * e + H.fly[i] * ff + H.disp[i] * uniforms.uScatter.value,
+    o[i + 1] + (o[i + 1] - 2.2) * e + H.fly[i + 1] * ff + uniforms.uLift.value + H.disp[i + 1] * uniforms.uScatter.value,
+    o[i + 2] + o[i + 2] * e + H.fly[i + 2] * ff + H.disp[i + 2] * uniforms.uScatter.value);
+}
+function updateTrails(t) {
+  for (let k = flyers.length - 1; k >= 0; k--) if (t - flyers[k].born > 3.2) flyers.splice(k, 1);
+  tA.fill(0);
+  const live = flyers.filter(f => t - f.born > -0.2).slice(0, MAXT);
+  live.forEach((f, j) => {
+    for (let k = 0; k < TRAIL; k++) {
+      const age = t - f.born - k * 0.03, n = j * TRAIL + k;
+      if (age < 0 || age > 2.6) continue;
+      flyPos(f.v, age, _tp).toArray(tPos, n * 3);
+      tA[n] = (1 - k / TRAIL) ** 1.6 * (1 - clamp((age - 2.2) / 0.4, 0, 1)) * (k === 0 ? 1.4 : 0.8);
+    }
+  });
+  trailGeo.attributes.position.needsUpdate = true; trailGeo.attributes.aA.needsUpdate = true;
+  trail.visible = live.length > 0;
+}
+const _tp = new THREE.Vector3();
+
 // Inside: the newest pieces float around you as bigger glowing puzzle pieces with clear photos.
 const MAXF = 40, CARD = 0.72;
 const F = makeInstanced(puzzleGeometry(CARD, 0.03), MAXF);
@@ -390,7 +436,11 @@ function addPiece(info, img, born) {
   pieces.set(info.slot, { ...info, img, cell });
   const v = voxelOf(info.slot);
   H.cell[v] = cell; H.birth[v] = born;
-  H.g.attributes.aCell.needsUpdate = true; H.g.attributes.aBirth.needsUpdate = true;
+  if (born > 0) {   // from somewhere above and to the side, a different way every time
+    const a = Math.random() * Math.PI * 2, up = 0.5 + Math.random() * 0.7, d = 13 + Math.random() * 6;
+    H.fly.set([Math.cos(a) * d, up * d, Math.sin(a) * d], v * 3); flyers.push({ v, born });
+  } else H.fly.fill(0, v * 3, v * 3 + 3);
+  H.g.attributes.aCell.needsUpdate = true; H.g.attributes.aBirth.needsUpdate = true; H.g.attributes.aFly.needsUpdate = true;
   // the newest pieces float inside; the oldest card makes room
   const k = cardNext++ % MAXF;
   if (cardOwner[k] != null) delete pieces.get(cardOwner[k]).card;
@@ -414,7 +464,7 @@ async function onNewPiece(info) {
   try {
     const img = await loadImage(info.url);
     addPiece(info, img, clock() + 0.3);
-    setCaption('A new piece of home just lit up', 6000);
+    setCaption('A new piece of home is flying in', 4000);
   } catch {}
 }
 
@@ -456,7 +506,7 @@ function projectPieces() {
   for (let i = 0; i < N; i++) {
     _v.set(H.off[i * 3], H.off[i * 3 + 1] + lift, H.off[i * 3 + 2]);
     near[i] = clamp(1 - (_v.distanceTo(camera.position) - (cd - 3.5)) / 7 * 0.8, 0.2, 1);   // the side facing you catches most of the wind
-    _v.set(H.off[i * 3] * 1.1 + H.disp[i * 3], (H.off[i * 3 + 1] - 2.2) * 1.1 + 2.2 + H.disp[i * 3 + 1] + lift, H.off[i * 3 + 2] * 1.1 + H.disp[i * 3 + 2]).project(camera);
+    _v.set(H.off[i * 3] * 1.24 + H.disp[i * 3], (H.off[i * 3 + 1] - 2.2) * 1.24 + 2.2 + H.disp[i * 3 + 1] + lift, H.off[i * 3 + 2] * 1.24 + H.disp[i * 3 + 2]).project(camera);
     scr[i * 2] = (_v.x * 0.5 + 0.5) * innerWidth; scr[i * 2 + 1] = (0.5 - _v.y * 0.5) * innerHeight;
   }
 }
@@ -469,7 +519,7 @@ function pushAt(x0, y0, x1, y1) {
   const dist = camera.position.length(), px2w = 2 * dist * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) / innerHeight;
   const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0), up = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1);
   const fwd = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 2).negate();
-  const speed = Math.min(len, 80) * px2w * 5;                      // faster sweep, stronger gust
+  const speed = Math.min(len, 60) * px2w * 3.2;                      // faster sweep, stronger gust
   const ux = dx / len, uy = dy / len;
   for (let i = 0; i < N; i++) {
     const px = scr[i * 2] - x0, py = scr[i * 2 + 1] - y0;
@@ -491,7 +541,7 @@ function pushAt(x0, y0, x1, y1) {
 }
 function stepPieces(dt) {
   if (!simActive) return;
-  const k = 2.2, damp = Math.exp(-dt * 1.6), D = H.disp;   // lazy spring: floats away, settles back in ~3 s
+  const k = 1.4, damp = Math.exp(-dt * 1.9), D = H.disp;   // lazy spring: floats away, settles back in ~3 s
   let energy = 0;
   for (let j = 0; j < N * 3; j++) {
     vel[j] = (vel[j] - D[j] * k * dt) * damp;
@@ -506,10 +556,14 @@ function frame(now) {
   const dt = Math.min(0.05, (now - lastFrame) / 1000); lastFrame = now;
   const t = clock(); uniforms.uTime.value = t;
   if (!dragging) { view.yaw += view.vyaw * dt; view.vyaw *= Math.exp(-dt * 2.5); }
-  if (!dragging && view.inside < 0.5) view.yaw += 0.06 * dt * (1 - view.inside * 2);   // the house slowly turns by itself
+  if (!dragging && view.inside < 0.5) view.yaw += 0.025 * dt * (1 - view.inside * 2);   // the house slowly turns by itself
   // turning the house moves the light: the hue follows how far it has turned
   view.turnHue += (view.yaw - lastYaw) * 0.35 + (view.pitch - (frame.lp ?? view.pitch)) * 0.25; lastYaw = view.yaw; frame.lp = view.pitch;
   uniforms.uTurn.value = view.turnHue;
+  steerS.x += (edgeSteer.x - steerS.x) * (1 - Math.exp(-dt * 2.5)); steerS.y += (edgeSteer.y - steerS.y) * (1 - Math.exp(-dt * 2.5));
+  if (view.insideT > 0.5 && (Math.abs(steerS.x) > 1e-3 || Math.abs(steerS.y) > 1e-3)) turn(steerS.x * 0.9 * dt, steerS.y * 0.6 * dt);
+  if (!tracks.length) edgeSteer.x = edgeSteer.y = 0;
+  doorLabel();
   const ease = frameCamera(dt);
   dustMat.uniforms.uScale.value = innerHeight * renderer.getPixelRatio() / 900 * 18;
   // floating cards drift slowly around you inside
@@ -522,12 +576,14 @@ function frame(now) {
   // inside, the walls hold still and their photos come into focus
   cards.visible = false;
   uniforms.uScatter.value = 1 - ease;
-  uniforms.uBlur.value = lerp(1.6, 0.0, ease); uniforms.uPhoto.value = lerp(0.55, 0.92, ease); uniforms.uSolid.value = ease * 0.85;
+  uniforms.uBlur.value = lerp(0.35, 0.0, ease); uniforms.uPhoto.value = lerp(0.95, 0.97, ease); uniforms.uSolid.value = ease * 0.85;
   lampGlow.material.opacity = roofGlow.material.opacity = 1 - ease;
   hearthGlow.material.opacity = ease * flick * (0.9 + 0.1 * Math.sin(t * 4.3));
   dustMat.uniforms.uScale.value *= 1 - ease * 0.6;
   compMat.uniforms.uBloom.value = lerp(1.1, 0.8, ease);
   stepPieces(dt);
+  trailMat.uniforms.uScale.value = innerHeight * renderer.getPixelRatio() / 900 * 16;
+  updateTrails(t);
   if (view.insideT < 0.5) view.ipitch *= Math.exp(-dt * 3);   // outside, the gaze levels again   // magnetic pull back into the house
   updateHover();
   renderFrame(t);
@@ -542,7 +598,7 @@ const pickBoxes = new THREE.InstancedMesh(new THREE.BoxGeometry(P * 0.9, P * 0.9
 let pickLift = null;
 function placePickBoxes() {
   const m = new THREE.Matrix4(), one = new THREE.Vector3(1, 1, 1), lift = uniforms.uLift.value;
-  const e = 0.1 * uniforms.uScatter.value, c = new THREE.Vector3(0, 2.2, 0);   // follow the house as it opens up outside
+  const e = 0.24 * uniforms.uScatter.value, c = new THREE.Vector3(0, 2.2, 0);   // follow the house as it opens up outside
   slots.forEach((s, i) => pickBoxes.setMatrixAt(i, m.compose(s.pos.clone().sub(c).multiplyScalar(1 + e).add(c).setY((s.pos.y - 2.2) * (1 + e) + 2.2 + lift), s.rot, one)));
   pickBoxes.instanceMatrix.needsUpdate = true; pickBoxes.computeBoundingSphere(); pickLift = lift;
 }
@@ -673,10 +729,41 @@ async function initHands() {
 //           · the other open hand is a cursor on the walls; close it on a photo to step into that memory
 //           · bring both open palms together: step back out (from a photo first, then from the house)
 let twoHist = [];
+const edgeSteer = { x: 0, y: 0 }, steerS = { x: 0, y: 0 };
+// One big, easy target to step in and out: hover a hand over it for a moment (or click it).
+const door = { el: $('#door'), over: false, since: 0, cool: 0, now: 0 };
+function doorAction() {
+  if (!$('#focus').hidden) closeFocus();
+  else view.insideT = view.insideT > 0.5 ? 0 : 1;
+  view.ipitch = 0; twoHist.length = 0; door.cool = door.now + 1500;
+}
+door.el.addEventListener('click', doorAction);
+function dwellDoor(c, now) {
+  let over = false; door.now = now;
+  if (c && now > door.cool) {
+    const r = door.el.getBoundingClientRect(), x = c.x * innerWidth, y = c.y * innerHeight, pad = 30;
+    over = x > r.left - pad && x < r.right + pad && y > r.top - pad && y < r.bottom + pad;
+  }
+  if (over && !door.over) door.since = now;
+  door.over = over;
+  const p = over ? clamp((now - door.since) / 1100, 0, 1) : 0;
+  door.el.style.setProperty('--p', p); door.el.classList.toggle('over', over);
+  if (p >= 1) { door.over = false; doorAction(); door.el.style.setProperty('--p', 0); }
+}
+function doorLabel() {
+  const t = !$('#focus').hidden ? 'Back' : view.insideT > 0.5 ? 'Step outside' : 'Step inside';
+  if (door.el.dataset.t !== t) { door.el.dataset.t = t; door.el.querySelector('span').textContent = t; }
+}
 function onHands(tr, now, G) {
   onHands.G = G;
   tracks = tr.filter(t => !t.lost);
-  const next = new Map(tracks.map(t => [t.id, { ...toScreen(t), t: now }]));
+  // smooth the hands: slow movements are steadied a lot, fast ones still follow quickly (no jitter, no lag)
+  const next = new Map(tracks.map(t => {
+    const r = toScreen(t), q = prev.get(t.id);
+    if (!q) return [t.id, { ...r, t: now }];
+    const sp = Math.hypot(r.x - q.x, r.y - q.y), k = clamp(0.18 + sp * 6, 0.18, 0.6);
+    return [t.id, { x: q.x + (r.x - q.x) * k, y: q.y + (r.y - q.y) * k, t: now }];
+  }));
   const isFist = t => t.gesture === G.FIST || t.gesture === G.PINCH || t.gesture === G.THUMBS;
   const isOpen = t => t.gesture === G.OPEN;
   const inside = view.insideT > 0.5;
@@ -715,31 +802,36 @@ function onHands(tr, now, G) {
     if (t && isFist(t)) {
       mode = 'grab'; hint = 'holding · move to turn · open to let go';
       const c = next.get(t.id), p = prev.get(t.id);
-      if (p) turn((c.x - p.x) * 5, (c.y - p.y) * 2.6);
+      if (p) turn((c.x - p.x) * 3.2, (c.y - p.y) * 1.6);
       view.vyaw = 0;
     } else if (t && mode !== 'step') {
-      mode = 'stir'; hint = 'sweep through the house · two hands back to back, spread to step in';
-      const c = next.get(t.id), p = prev.get(t.id);   // an open hand blows the pieces aside
+      mode = 'stir'; hint = door.over ? 'hold still to step inside' : 'sweep through the house · hold a hand on Step inside';
+      const c = next.get(t.id), p = prev.get(t.id); cursor = c;   // an open hand blows the pieces aside
       if (p) { projectPieces(); pushAt(p.x * innerWidth, p.y * innerHeight, c.x * innerWidth, c.y * innerHeight); }
     }
   } else if (!closing) {
-    // inside: with two hands the left one steers and the right one points; with one hand it points, and a fist steers
-    const steer = two.length === 2 ? two[0] : (tracks[0] && isFist(tracks[0]) && !(hover && hover.slot != null && tracks[0].changed) ? tracks[0] : null);
-    const aim = two.length === 2 ? two[1] : (tracks[0] && tracks[0] !== steer ? tracks[0] : null);
-    if (steer) {
-      const c = next.get(steer.id), p = prev.get(steer.id);
-      if (p) turn((c.x - p.x) * 4, (c.y - p.y) * 2.4);
+    // inside: one hand is the cursor. Take it to the edge of the screen and the room turns that way;
+    // close it on a photo to open it. Two hands moving together turn the room with them.
+    edgeSteer.x = edgeSteer.y = 0;
+    if (two.length === 2) {
+      const [a, b] = two, ca = next.get(a.id), cb = next.get(b.id), pa = prev.get(a.id), pb = prev.get(b.id);
+      if (pa && pb) turn(((ca.x - pa.x) + (cb.x - pb.x)) * 2.2, ((ca.y - pa.y) + (cb.y - pb.y)) * 1.3);
       view.vyaw = 0; mode = 'grab';
-    }
-    if (aim) {
-      const c = next.get(aim.id); cursor = c; pointerSource = 'hand';
+      hint = !$('#focus').hidden ? 'palms together to step back' : 'move both hands to turn · palms together to step out';
+    } else if (tracks[0]) {
+      const aim = tracks[0], c = next.get(aim.id); cursor = c; pointerSource = 'hand';
       pointerNdc = new THREE.Vector2(c.x * 2 - 1, -(c.y * 2 - 1)); pointerMoved = true;
-      // closing the aiming hand on a photo steps into it
+      const zx = 0.2, zy = 0.16, onDoor = door.over;
+      if (c.x < zx) edgeSteer.x = -(((zx - c.x) / zx) ** 1.4); else if (c.x > 1 - zx) edgeSteer.x = ((c.x - 1 + zx) / zx) ** 1.4;
+      if (!onDoor) { if (c.y < zy) edgeSteer.y = -(((zy - c.y) / zy) ** 1.4); else if (c.y > 1 - zy) edgeSteer.y = ((c.y - 1 + zy) / zy) ** 1.4; }
       if (isFist(aim) && aim.changed && hover && hover.slot != null && $('#focus').hidden) openFocus(pieces.get(hover.slot));
       mode = 'point';
+      hint = !$('#focus').hidden ? 'hold your hand on Back to return' : edgeSteer.x || edgeSteer.y ? 'turning · come back to the middle to stop' : 'move to the edge to turn · make a fist on a photo';
     }
-    hint = !$('#focus').hidden ? 'palms together to step back' : two.length === 2 ? 'left hand looks around · right hand: close on a photo to open it' : 'aim with your palm · close it on a photo · fist to look around';
   }
+  // the door button: hold any hand on it for a moment
+  const doorHand = cursor || (tracks.length === 1 ? next.get(tracks[0].id) : null);
+  dwellDoor(doorHand, now);
   if (!cursor && pointerSource === 'hand') pointerNdc = null;
   prev = next;
   if (mode !== active) { active = mode; for (const el of document.querySelectorAll('#guide [data-g]')) el.classList.toggle('on', el.dataset.g === mode); }
@@ -749,7 +841,7 @@ function drawHands(now) {
   hctx.clearRect(0, 0, W, H);
   const G = onHands.G; if (!G || !tracks.length) return;
   const spin = now / 1000;
-  const pts = tracks.map(t => { const p = toScreen(t); return { t, x: p.x * W, y: p.y * H }; });
+  const pts = tracks.map(t => { const p = prev.get(t.id) || toScreen(t); return { t, x: p.x * W, y: p.y * H }; });
   for (const { t, x, y } of pts) {
     const fist = t.gesture === G.FIST || t.gesture === G.PINCH || t.gesture === G.THUMBS, point = t.gesture === G.POINT;
     const n = fist ? 8 : point ? 6 : 14, r = (fist ? 14 : point ? 10 : 30) * dpr;
@@ -869,4 +961,4 @@ if (preview || new URLSearchParams(location.search).has('preview')) {
   initHands();
 }
 requestAnimationFrame(frame);
-window.house = { pushAt, H, vel, view, pieces, addDemoPieces, camera, F, onHands: (...a) => onHands(...a), openFocus, count: N };
+window.house = { pushAt, H, vel, view, pieces, addDemoPieces, uniforms, flyers, camera, F, onHands: (...a) => onHands(...a), openFocus, count: N };
