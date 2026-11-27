@@ -99,4 +99,9 @@ body:active { cursor: grabbing; }
 .spot p { animation: fade 0.5s 1s both; margin: 0; text-align: center; display: grid; gap: 6px; }
 .spot b { font-weight: 500; font-size: clamp(14px, 1.8vmin, 20px); }
 .spot span { font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--soft); }
+.xclose { position: fixed; z-index: 6; left: calc(50% + 28vmin); top: calc(50% - 34vmin); width: clamp(48px, 7vmin, 72px); aspect-ratio: 1; border: 0; border-radius: 50%; cursor: pointer;
+  display: grid; place-items: center; color: var(--cream); background: conic-gradient(from -90deg, rgba(255, 150, 200, 0.6) calc(var(--p, 0) * 360deg), transparent 0), var(--glass);
+  box-shadow: inset 0 0 0 1px rgba(255, 190, 220, 0.5), 0 0 24px rgba(255, 92, 154, 0.35); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); animation: fade 0.4s 0.4s both; transition: transform 0.25s; }
+.xclose svg { width: 46%; height: 46%; }
+.xclose.over, .xclose:hover { transform: scale(1.12); background: var(--irid); color: #1d0a14; }
 [hidden] { display: none !important; }
