@@ -68,15 +68,23 @@ around you, lit by a flickering, fire-like light.
 | --- | --- |
 | 🖐 sweep an open hand (outside) | the pieces you pass blow away like in a wind and drift back into the house |
 | ✊ fist and move (outside) | turn the house |
-| 🙌 backs of the hands together, then open them apart like curtains | open the house and step inside |
-| one hand (inside) | moves the view; with two hands the left one steers |
-| 🖐 → ✊ the other hand (inside) | your palm is a cursor on the walls; close it on a photo to step into that memory |
-| 🙏 open palms apart, then press them together | step back out: from a photo first, then out of the house |
-| mouse | move to stir, drag to turn, scroll or double-click to step in, scroll inside to look up and down, click a piece to open it |
+| 🖐 hold a hand on the **Step inside / Step outside** button (bottom centre) | step in or out (it fills in about a second); also closes a photo or a QR |
+| 🙌 backs of the hands together, then open them apart | also steps inside |
+| 🖐 one hand (inside) | a cursor on the walls; take it to the edge of the screen and the room turns that way |
+| 🙌 two hands moving together (inside) | turn the room with them; press the palms together to step out |
+| ✊ close your hand on a photo (inside) | open it |
+| ✊ close your hand on an empty place (inside) | a QR code just for that place: the photo sent from it lands there, then you can draw on it |
+| ☝️ point one finger (drawing) | draw on the new piece; open hand to move without drawing; hold on **Done** to put it back in the house |
+| mouse | move to stir, drag to turn, scroll or double-click to step in, scroll inside to look up and down, click a piece to open it, click an empty place inside for its QR, drag to draw |
 | `I` or space | step in / out |
 | `X` / `Shift+X` | add 60 / 300 test pieces (only on screen) |
 
 Font: Montserrat, in `public/type/` (SIL Open Font License).
+
+Photos have a topic (people, animals, food, places, nature, things, moments) chosen on the phone. Outside,
+thin threads in the topic's colour tie together pieces about the same thing; they glow brighter as the
+house comes apart. New pieces fly in like falling stars. Online, run `supabase.sql` again (or just its
+three `alter table` lines) to store topics, chosen places and drawings.
 
 ## On the board
 

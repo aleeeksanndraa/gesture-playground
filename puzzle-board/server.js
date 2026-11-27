@@ -107,12 +107,15 @@ function qrSvg(text) {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${n + 2 * q} ${n + 2 * q}" shape-rendering="crispEdges"><rect width="100%" height="100%" fill="#fff"/><path d="${d}" fill="#0b0d18"/></svg>`;
 }
 
+// the first place in the house that has no photo yet
+function freeSlot() { const taken = new Set(pieces.map(q => q.slot)); let s = 0; while (taken.has(s)) s++; return s; }
+
 async function handle(req, res) {
   const url = new URL(req.url, 'http://x');
   const p = url.pathname;
 
   if (p === '/api/info') return json(res, 200, { phoneUrl: phoneUrl(), count: pieces.length });
-  if (p === '/api/next') return json(res, 200, { slot: pieces.length });
+  if (p === '/api/next') return json(res, 200, { slot: freeSlot(), count: pieces.length });
   if (p === '/api/pieces' && req.method === 'GET') return json(res, 200, pieces);
   if (p === '/api/qr.svg') {
     res.writeHead(200, { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'no-store' });
@@ -134,9 +137,19 @@ async function handle(req, res) {
     const buf = Buffer.from(m[2], 'base64');
     const id = (pieces.length ? pieces[pieces.length - 1].id : 0) + 1;
     const ext = m[1] === 'jpeg' ? 'jpg' : m[1];
-    const file = `${id}.${ext}`;
+    const file = `${id}-${Date.now().toString(36)}.${ext}`;   // unique, also for a drawing over a piece
     fs.writeFileSync(path.join(PIECES_DIR, file), buf);
-    const piece = { id, slot: pieces.length, url: `/pieces/${file}`, t: Date.now() };
+    const want = Number.isInteger(body.slot) && body.slot >= 0 && body.slot < 100000 ? body.slot : null;
+    const topic = typeof body.topic === 'string' && /^[a-z]{2,16}$/.test(body.topic) ? body.topic : null;
+    const taken = new Set(pieces.map(q => q.slot));
+    if (body.redraw && want != null && taken.has(want)) {   // a drawing on a piece that is already there: replace its picture
+      const old = pieces.find(q => q.slot === want);
+      old.url = `/pieces/${file}`; old.redraw = true; save();
+      broadcast('piece', old);
+      console.log(`  ~ piece ${old.id} drawn on`);
+      return json(res, 200, old);
+    }
+    const piece = { id, slot: want != null && !taken.has(want) ? want : freeSlot(), topic, url: `/pieces/${file}`, t: Date.now() };
     pieces.push(piece); save();
     broadcast('piece', piece);
     console.log(`  + piece ${id} (${Math.round(buf.length / 1024)} KB)`);

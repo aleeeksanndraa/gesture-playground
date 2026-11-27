@@ -4,6 +4,7 @@
 import * as THREE from './three.module.min.js';
 import { CONFIG } from './config.js';
 import { api } from './api.js';
+import { TOPICS, topicOf } from './topics.js';
 
 const $ = s => document.querySelector(s);
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -403,6 +404,99 @@ function updateTrails(t) {
 }
 const _tp = new THREE.Vector3();
 
+// Threads: when the house comes apart, thin coloured threads tie together the pieces whose photos
+// share a topic (people, animals, food, places ...). Each thread follows its two pieces as they drift.
+const SEG = 8, MAXC = 900;
+const TV = MAXC * SEG * 2;
+const thr = { oa: new Float32Array(TV * 3), ob: new Float32Array(TV * 3), da: new Float32Array(TV * 3), db: new Float32Array(TV * 3),
+  sl: new Float32Array(TV * 4), t: new Float32Array(TV), col: new Float32Array(TV * 3), pairs: [] };
+const thrGeo = new THREE.BufferGeometry();
+thrGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(TV * 3), 3));
+thrGeo.setAttribute('aOffA', new THREE.BufferAttribute(thr.oa, 3)); thrGeo.setAttribute('aOffB', new THREE.BufferAttribute(thr.ob, 3));
+thrGeo.setAttribute('aDispA', new THREE.BufferAttribute(thr.da, 3).setUsage(THREE.DynamicDrawUsage));
+thrGeo.setAttribute('aDispB', new THREE.BufferAttribute(thr.db, 3).setUsage(THREE.DynamicDrawUsage));
+thrGeo.setAttribute('aSL', new THREE.BufferAttribute(thr.sl, 4)); thrGeo.setAttribute('aT', new THREE.BufferAttribute(thr.t, 1));
+thrGeo.setAttribute('aCol', new THREE.BufferAttribute(thr.col, 3));
+thrGeo.setDrawRange(0, 0);
+const centerGLSL = `
+uniform float uTime, uScatter, uLift;
+vec3 pieceCenter(vec3 o, float seed, float loose, vec3 disp, out float br, out float pf){
+  float k = loose * loose;
+  vec3 bob = vec3(sin(uTime * 0.5 + seed * 40.0), sin(uTime * 0.7 + seed * 23.0), cos(uTime * 0.45 + seed * 31.0)) * (0.015 + k * 0.16);
+  float wave = 0.5 + 0.5 * sin(uTime * 0.42 - o.y * 0.45 + seed * 1.2);
+  float wave2 = 0.5 + 0.5 * sin(uTime * 0.17 + o.x * 0.25 + seed * 0.6);
+  br = (pow(clamp(wave, 0.0, 1.0), 4.0) * (0.3 + loose) + pow(clamp(wave2, 0.0, 1.0), 8.0) * 0.6) * uScatter * 0.35;
+  vec3 push = disp * uScatter; pf = length(push);
+  vec3 outDir = normalize(o - vec3(0.0, 2.2, 0.0) + 1e-3);
+  vec3 home = o + (o - vec3(0.0, 2.2, 0.0)) * 0.24 * uScatter;
+  vec3 wander = vec3(sin(uTime * 0.08 + seed * 17.0), sin(uTime * 0.07 + seed * 29.0) * 0.6, cos(uTime * 0.075 + seed * 11.0)) * 0.14 * uScatter;
+  vec3 p = home + wander + bob + (outDir + vec3(0.0, 0.45 + seed * 0.8, 0.0)) * br + push;
+  p.y += uLift; return p;
+}`;
+const thrMat = new THREE.ShaderMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  uniforms: { uTime: uniforms.uTime, uScatter: uniforms.uScatter, uLift: uniforms.uLift, uShow: { value: 1 } },
+  vertexShader: centerGLSL + `
+  attribute vec3 aOffA, aOffB, aDispA, aDispB, aCol; attribute vec4 aSL; attribute float aT;
+  uniform float uShow; varying vec3 vCol; varying float vA;
+  void main(){
+    float brA, pfA, brB, pfB;
+    vec3 a = pieceCenter(aOffA, aSL.x, aSL.y, aDispA, brA, pfA), b = pieceCenter(aOffB, aSL.z, aSL.w, aDispB, brB, pfB);
+    vec3 p = mix(a, b, aT);
+    float len = length(b - a), arc = sin(3.14159 * aT);
+    p.y -= arc * len * 0.12;                                                     // a thread sags a little
+    p += vec3(sin(uTime * 0.6 + aSL.x * 20.0), 0.0, cos(uTime * 0.5 + aSL.z * 20.0)) * arc * 0.08;
+    float apart = clamp((brA + brB) * 1.6 + (pfA + pfB) * 0.9, 0.0, 1.0);        // brighter as the pieces come apart
+    vA = (0.2 + 0.8 * apart) * uScatter * uShow * (0.55 + 0.45 * arc);
+    vCol = aCol;
+    gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
+  }`,
+  fragmentShader: `varying vec3 vCol; varying float vA; void main(){ gl_FragColor = vec4(vCol * vA * 0.9, 1.0); }` });
+const threads = new THREE.LineSegments(thrGeo, thrMat); threads.frustumCulled = false; threads.renderOrder = 6; world.add(threads);
+let threadsDirty = 0;
+function buildThreads() {
+  const by = new Map();
+  for (const p of pieces.values()) {
+    if (!p.topic || !topicOf(p.topic)) continue;
+    const v = voxelOf(p.slot); if (H.cell[v] < 0) continue;
+    if (!by.has(p.topic)) by.set(p.topic, []);
+    by.get(p.topic).push(v);
+  }
+  const seen = new Set(), pairs = [];
+  for (const [topic, vs] of by) {
+    for (const a of vs) {
+      const near = vs.filter(b => b !== a).map(b => [b, (H.off[a * 3] - H.off[b * 3]) ** 2 + (H.off[a * 3 + 1] - H.off[b * 3 + 1]) ** 2 + (H.off[a * 3 + 2] - H.off[b * 3 + 2]) ** 2])
+        .filter(x => x[1] < 18).sort((x, y) => x[1] - y[1]).slice(0, 2);
+      for (const [b] of near) { const k = a < b ? a + ':' + b : b + ':' + a; if (!seen.has(k)) { seen.add(k); pairs.push([a, b, topic]); } }
+    }
+  }
+  pairs.length = Math.min(pairs.length, MAXC);
+  const c = new THREE.Color();
+  pairs.forEach(([a, b, topic], j) => {
+    c.set(topicOf(topic).color).convertSRGBToLinear();
+    for (let s = 0; s < SEG; s++) for (let e = 0; e < 2; e++) {
+      const n = (j * SEG + s) * 2 + e;
+      thr.oa.set(H.off.subarray(a * 3, a * 3 + 3), n * 3); thr.ob.set(H.off.subarray(b * 3, b * 3 + 3), n * 3);
+      thr.sl.set([H.seed[a], H.loose[a], H.seed[b], H.loose[b]], n * 4);
+      thr.t[n] = (s + e) / SEG; c.toArray(thr.col, n * 3);
+    }
+  });
+  thr.pairs = pairs;
+  for (const name of ['aOffA', 'aOffB', 'aSL', 'aT', 'aCol']) thrGeo.attributes[name].needsUpdate = true;
+  thrGeo.setDrawRange(0, pairs.length * SEG * 2);
+  updateThreadDisp();
+}
+function updateThreadDisp() {
+  const D = H.disp;
+  thr.pairs.forEach(([a, b], j) => {
+    for (let k = 0; k < SEG * 2; k++) {
+      const n = j * SEG * 2 + k;
+      thr.da[n * 3] = D[a * 3]; thr.da[n * 3 + 1] = D[a * 3 + 1]; thr.da[n * 3 + 2] = D[a * 3 + 2];
+      thr.db[n * 3] = D[b * 3]; thr.db[n * 3 + 1] = D[b * 3 + 1]; thr.db[n * 3 + 2] = D[b * 3 + 2];
+    }
+  });
+  thrGeo.attributes.aDispA.needsUpdate = thrGeo.attributes.aDispB.needsUpdate = true;
+}
+
 // Inside: the newest pieces float around you as bigger glowing puzzle pieces with clear photos.
 const MAXF = 40, CARD = 0.72;
 const F = makeInstanced(puzzleGeometry(CARD, 0.03), MAXF);
@@ -450,12 +544,14 @@ function addPiece(info, img, born) {
   F.g.attributes.aCell.needsUpdate = true; F.g.attributes.aBirth.needsUpdate = true;
   pieces.get(info.slot).card = k;
   $('#count').textContent = pieces.size;
+  if (info.topic) threadsDirty = Math.max(threadsDirty, born > 0 ? born + 2.7 : 0.001);
 }
 function loadImage(url) { return new Promise((res, rej) => { const i = new Image(); i.crossOrigin = 'anonymous'; i.onload = () => res(i); i.onerror = rej; i.src = url; }); }
 async function loadAll() {
   let list = [];
   try { list = await api.list(); } catch { return; }
-  const todo = list.filter(p => !pieces.has(p.slot));
+  const last = new Map(); for (const p of list) last.set(p.slot, p);   // a drawn-over piece replaces the photo
+  const todo = [...last.values()].filter(p => !pieces.has(p.slot));
   let next = 0;
   const worker = async () => { while (next < todo.length) { const p = todo[next++]; try { addPiece(p, await loadImage(p.url), -100); } catch {} } };
   await Promise.all(Array.from({ length: 6 }, worker));
@@ -463,7 +559,9 @@ async function loadAll() {
 async function onNewPiece(info) {
   try {
     const img = await loadImage(info.url);
+    if (info.redraw && pieces.has(info.slot)) { if (pieces.get(info.slot).img !== img) updatePiece(info.slot, img); return; }
     addPiece(info, img, clock() + 0.3);
+    if (spot.v != null && voxelOf(info.slot) === spot.v) { closeSpot(); setTimeout(() => startDrawing(pieces.get(info.slot)), 3000); }
     setCaption('A new piece of home is flying in', 4000);
   } catch {}
 }
@@ -581,7 +679,11 @@ function frame(now) {
   hearthGlow.material.opacity = ease * flick * (0.9 + 0.1 * Math.sin(t * 4.3));
   dustMat.uniforms.uScale.value *= 1 - ease * 0.6;
   compMat.uniforms.uBloom.value = lerp(1.1, 0.8, ease);
+  const wasActive = simActive;
   stepPieces(dt);
+  if (threadsDirty && t > threadsDirty) { threadsDirty = 0; buildThreads(); }
+  else if (wasActive && thr.pairs.length) updateThreadDisp();
+  threads.visible = ease < 0.98;
   trailMat.uniforms.uScale.value = innerHeight * renderer.getPixelRatio() / 900 * 16;
   updateTrails(t);
   if (view.insideT < 0.5) view.ipitch *= Math.exp(-dt * 3);   // outside, the gaze levels again   // magnetic pull back into the house
@@ -636,13 +738,14 @@ function updateHover() {
 function setHover(h) {
   const key = h ? (h.card != null ? 'c' + h.card : 'v' + h.voxel) : null;
   if (key !== (hover && hover.key)) { hover = h ? { ...h, key } : null; dwell = { key, t: performance.now() }; }
-  uniforms.uHover.value = hover && hover.voxel != null ? hover.voxel : -1;
+  uniforms.uHover.value = spot.v != null ? spot.v : hover && hover.voxel != null ? hover.voxel : -1;
   cardMat.uniforms.uHover.value = hover && hover.card != null ? hover.card : -1;
-  if (!hover) { outline.visible = false; $('#qrbox').classList.remove('call'); setCaption(''); return; }
+  if (!hover && spot.v == null) { outline.visible = false; $('#qrbox').classList.remove('call'); setCaption(''); return; }
+  if (spot.v != null) return;
   if (hover.voxel != null && view.inside > 0.5) { outline.visible = true; const sl = slots[hover.voxel]; outline.position.copy(sl.pos).y += uniforms.uLift.value; outline.quaternion.copy(sl.rot); } else outline.visible = false;
   const p = hover.slot != null ? pieces.get(hover.slot) : null;
   if (p) setCaption(`Piece ${p.slot + 1} · ${p.demo ? 'test photo' : timeAgo(p.t)}`);
-  else setCaption('An empty spot · scan the code to light it up');
+  else setCaption(view.inside > 0.5 ? 'An empty place · close your hand or click to fill it' : 'An empty spot · scan the code to light it up');
   $('#qrbox').classList.toggle('call', !p);
 }
 function timeAgo(t) {
@@ -664,8 +767,72 @@ function openFocus(p) {
   $('#focus').hidden = false;
   clearTimeout(openFocus.t); openFocus.t = setTimeout(closeFocus, 6000);
 }
-function closeFocus() { $('#focus').hidden = true; }
-$('#focus').addEventListener('click', closeFocus);
+// Drawing on a piece that just arrived in the place you chose: point one finger (or drag the mouse)
+// to draw over the photo, hold a hand on Done to send the drawn piece back into the house.
+const ink = { on: false, piece: null, last: null, strokes: 0, hue: 0 };
+const inkCanvas = $('#focusInk'), inkCtx = inkCanvas.getContext('2d');
+function startDrawing(p) {
+  openFocus(p); clearTimeout(openFocus.t); openFocus.t = setTimeout(closeFocus, 120000);
+  ink.on = true; ink.piece = p; ink.last = null; ink.strokes = 0;
+  inkCtx.clearRect(0, 0, 512, 512); inkCanvas.hidden = false;
+  $('#focus').classList.add('drawing');
+  $('#focusText').textContent = 'Draw on it · point one finger, or drag the mouse';
+}
+function inkAt(cx, cy, down) {   // screen pixels
+  const r = inkCanvas.getBoundingClientRect(), x = (cx - r.left) / r.width * 512, y = (cy - r.top) / r.height * 512;
+  if (!down || x < -20 || y < -20 || x > 532 || y > 532) { ink.last = null; return; }
+  ink.hue = (ink.hue + 1.5) % 360;
+  if (ink.last) {
+    inkCtx.strokeStyle = `hsl(${ink.hue}, 95%, 72%)`; inkCtx.lineWidth = 9; inkCtx.lineCap = inkCtx.lineJoin = 'round';
+    inkCtx.shadowColor = `hsl(${ink.hue}, 100%, 70%)`; inkCtx.shadowBlur = 12;
+    inkCtx.beginPath(); inkCtx.moveTo(ink.last.x, ink.last.y); inkCtx.lineTo(x, y); inkCtx.stroke();
+    ink.strokes++;
+  }
+  ink.last = { x, y };
+}
+async function finishDrawing() {
+  const p = ink.piece; ink.on = false; $('#focus').classList.remove('drawing');
+  if (p && ink.strokes > 3) {
+    const c = document.createElement('canvas'); c.width = c.height = 512;
+    const x = c.getContext('2d'); x.drawImage($('#focus canvas'), 0, 0); x.drawImage(inkCanvas, 0, 0);
+    updatePiece(p.slot, c);   // show it right away
+    try { await api.upload(c.toDataURL('image/jpeg', 0.86), { topic: p.topic, slot: p.slot, redraw: true }); setCaption('Your drawing is in the house', 4000); }
+    catch { setCaption('Could not save the drawing', 4000); }
+  }
+  inkCanvas.hidden = true; closeFocus();
+}
+// a piece got a new picture (a drawing on it): repaint its cell
+function updatePiece(slot, img) {
+  const p = pieces.get(slot); if (!p) return;
+  p.img = img; drawToAtlas(slot, img);
+  if (p.card != null) { drawCell(cctx, p.card, PER2, CELL2, img); cardTex.needsUpdate = true; }
+  H.birth[voxelOf(slot)] = clock() - 2.6; H.g.attributes.aBirth.needsUpdate = true;   // a soft flash, no flight
+}
+{
+  let down = false;
+  inkCanvas.addEventListener('pointerdown', e => { if (!ink.on) return; down = true; inkCanvas.setPointerCapture(e.pointerId); inkAt(e.clientX, e.clientY, true); e.stopPropagation(); });
+  inkCanvas.addEventListener('pointermove', e => { if (ink.on && down) inkAt(e.clientX, e.clientY, true); });
+  inkCanvas.addEventListener('pointerup', () => { down = false; ink.last = null; });
+  inkCanvas.addEventListener('click', e => e.stopPropagation());
+}
+// Inside, choose an empty place: a QR code appears just for it. The photo sent from it lands right there.
+const spot = { v: null, timer: 0 };
+function openSpot(v) {
+  if (!phoneUrl) { setCaption('Scan the code in the corner to add a piece', 4000); return; }
+  spot.v = v;
+  const url = phoneUrl + (phoneUrl.includes('?') ? '&' : '?') + 'slot=' + v;
+  $('#spotQr').src = api.qr(url); $('#spotNum').textContent = `Place ${v + 1}`;
+  $('#spot').hidden = false;
+  const sl = slots[v]; outline.visible = true; outline.position.copy(sl.pos).y += uniforms.uLift.value; outline.quaternion.copy(sl.rot);
+  uniforms.uHover.value = v;
+  clearTimeout(spot.timer); spot.timer = setTimeout(closeSpot, 60000);
+}
+function closeSpot() { spot.v = null; $('#spot').hidden = true; clearTimeout(spot.timer); setHover(hover); }
+$('#spot').addEventListener('click', closeSpot);
+function closeFocus() {
+  if (ink.on) { ink.on = false; $('#focus').classList.remove('drawing'); }
+  inkCanvas.hidden = true; $('#focus').hidden = true; }
+$('#focus').addEventListener('click', () => { if (!ink.on) closeFocus(); });
 
 // ---------- mouse ----------
 let dragging = false, drag = null;
@@ -682,7 +849,10 @@ canvas.addEventListener('pointermove', e => {
   turn(dx / innerWidth * 4, dy / innerHeight * 2.2);
   view.vyaw = -dx / innerWidth * 4 * 30;
 });
-canvas.addEventListener('pointerup', () => { if (drag && drag.moved < 6 && hover && hover.slot != null) openFocus(pieces.get(hover.slot)); drag = null; dragging = false; });
+canvas.addEventListener('pointerup', () => {
+  if (drag && drag.moved < 6 && hover) { if (hover.slot != null) openFocus(pieces.get(hover.slot)); else if (hover.voxel != null && view.insideT > 0.5) openSpot(hover.voxel); }
+  drag = null; dragging = false;
+});
 canvas.addEventListener('pointerleave', () => { pointerNdc = null; lastPush = null; });
 canvas.addEventListener('wheel', e => { e.preventDefault();
   if (view.insideT > 0.5) view.ipitch = clamp(view.ipitch - e.deltaY * 0.0022, -0.85, 1.1);   // scroll to look up and down
@@ -733,6 +903,8 @@ const edgeSteer = { x: 0, y: 0 }, steerS = { x: 0, y: 0 };
 // One big, easy target to step in and out: hover a hand over it for a moment (or click it).
 const door = { el: $('#door'), over: false, since: 0, cool: 0, now: 0 };
 function doorAction() {
+  if (spot.v != null) { closeSpot(); door.cool = door.now + 800; return; }
+  if (ink.on) { finishDrawing(); door.cool = door.now + 1200; return; }
   if (!$('#focus').hidden) closeFocus();
   else view.insideT = view.insideT > 0.5 ? 0 : 1;
   view.ipitch = 0; twoHist.length = 0; door.cool = door.now + 1500;
@@ -751,7 +923,7 @@ function dwellDoor(c, now) {
   if (p >= 1) { door.over = false; doorAction(); door.el.style.setProperty('--p', 0); }
 }
 function doorLabel() {
-  const t = !$('#focus').hidden ? 'Back' : view.insideT > 0.5 ? 'Step outside' : 'Step inside';
+  const t = ink.on ? 'Done' : spot.v != null ? 'Close' : !$('#focus').hidden ? 'Back' : view.insideT > 0.5 ? 'Step outside' : 'Step inside';
   if (door.el.dataset.t !== t) { door.el.dataset.t = t; door.el.querySelector('span').textContent = t; }
 }
 function onHands(tr, now, G) {
@@ -809,6 +981,12 @@ function onHands(tr, now, G) {
       const c = next.get(t.id), p = prev.get(t.id); cursor = c;   // an open hand blows the pieces aside
       if (p) { projectPieces(); pushAt(p.x * innerWidth, p.y * innerHeight, c.x * innerWidth, c.y * innerHeight); }
     }
+  } else if (ink.on && tracks[0]) {
+    // drawing on a piece: point one finger (or pinch) to draw, open the hand to move without drawing
+    const aim = tracks[0], c = next.get(aim.id); cursor = c; edgeSteer.x = edgeSteer.y = 0;
+    const pen = aim.gesture === G.POINT || aim.gesture === G.PINCH;
+    inkAt(c.x * innerWidth, c.y * innerHeight, pen && !door.over);
+    mode = 'point'; hint = pen ? 'drawing · open your hand to stop' : 'point one finger to draw · hold on Done to finish';
   } else if (!closing) {
     // inside: one hand is the cursor. Take it to the edge of the screen and the room turns that way;
     // close it on a photo to open it. Two hands moving together turn the room with them.
@@ -824,7 +1002,7 @@ function onHands(tr, now, G) {
       const zx = 0.2, zy = 0.16, onDoor = door.over;
       if (c.x < zx) edgeSteer.x = -(((zx - c.x) / zx) ** 1.4); else if (c.x > 1 - zx) edgeSteer.x = ((c.x - 1 + zx) / zx) ** 1.4;
       if (!onDoor) { if (c.y < zy) edgeSteer.y = -(((zy - c.y) / zy) ** 1.4); else if (c.y > 1 - zy) edgeSteer.y = ((c.y - 1 + zy) / zy) ** 1.4; }
-      if (isFist(aim) && aim.changed && hover && hover.slot != null && $('#focus').hidden) openFocus(pieces.get(hover.slot));
+      if (isFist(aim) && aim.changed && hover && $('#focus').hidden) { if (hover.slot != null) openFocus(pieces.get(hover.slot)); else if (hover.voxel != null && spot.v !== hover.voxel) openSpot(hover.voxel); }
       mode = 'point';
       hint = !$('#focus').hidden ? 'hold your hand on Back to return' : edgeSteer.x || edgeSteer.y ? 'turning · come back to the middle to stop' : 'move to the edge to turn · make a fist on a photo';
     }
@@ -875,7 +1053,9 @@ function connect() {
     onOnline: (ok, again) => { $('#offline').hidden = ok; if (ok && again) loadAll(); },
   });
 }
+let phoneUrl = '';
 function setPhoneUrl(url) {
+  phoneUrl = url;
   $('#url').textContent = url.replace(/^https?:\/\//, '');
   $('#qr').src = api.qr(url);
 }
@@ -939,7 +1119,7 @@ function addDemoPieces(n) {
   const t = clock();
   for (let i = 0; i < n; i++) {
     let slot = 0; while (pieces.has(slot)) slot++;
-    addPiece({ id: 'demo' + slot, slot, demo: true }, homeScene(), t + i * 0.015);
+    addPiece({ id: 'demo' + slot, slot, demo: true, topic: TOPICS[(Math.random() * TOPICS.length) | 0].id }, homeScene(), t + i * 0.015);
   }
 }
 
@@ -961,4 +1141,4 @@ if (preview || new URLSearchParams(location.search).has('preview')) {
   initHands();
 }
 requestAnimationFrame(frame);
-window.house = { pushAt, H, vel, view, pieces, addDemoPieces, uniforms, flyers, camera, F, onHands: (...a) => onHands(...a), openFocus, count: N };
+window.house = { spot, openSpot, ink, startDrawing, finishDrawing, inkAt, pushAt, H, vel, view, pieces, addDemoPieces, uniforms, flyers, camera, F, onHands: (...a) => onHands(...a), openFocus, count: N };

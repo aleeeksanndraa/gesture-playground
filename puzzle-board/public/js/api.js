@@ -5,7 +5,10 @@
 //              Pages) and the photos live in a free Supabase project. Used when js/config.js has
 //              supabaseUrl + supabaseAnonKey. The table and bucket are set up with supabase.sql.
 //
-// A piece is { id, slot, url, t }: slot is its place in the house (0, 1, 2, ... in upload order).
+// A piece is { id, slot, url, t, topic }: slot is its place in the house. A visitor can ask for a
+// particular empty place (the QR inside the house); otherwise it takes the first free one.
+// topic is what the photo is about (see topics.js), or null. redraw: a drawing over the piece
+// already in that slot, which replaces its picture.
 import { CONFIG } from './config.js';
 import qrcode from './qrcode.js';
 
@@ -18,8 +21,8 @@ const server = {
   async info() { return (await fetch('/api/info')).json(); },
   async next() { return (await (await fetch('/api/next', { cache: 'no-store' })).json()).slot; },
   async list() { return (await fetch('/api/pieces')).json(); },
-  async upload(dataUrl) {
-    const r = await fetch('/api/pieces', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: dataUrl }) });
+  async upload(dataUrl, { topic = null, slot = null, redraw = false } = {}) {
+    const r = await fetch('/api/pieces', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: dataUrl, topic, slot, redraw }) });
     const piece = await r.json();
     if (!r.ok) throw new Error(piece.error || 'Could not send');
     return piece;
@@ -39,12 +42,28 @@ const server = {
 const base = (CONFIG.supabaseUrl || '').replace(/\/$/, ''), key = CONFIG.supabaseAnonKey;
 // New-style keys (sb_publishable_…) go only in the apikey header; old anon JWTs also as a bearer token.
 const H = key && key.startsWith('eyJ') ? { apikey: key, Authorization: `Bearer ${key}` } : { apikey: key };
-const toPiece = (row, slot) => ({ id: row.id, slot, url: `${base}/storage/v1/object/public/pieces/${row.path}`, t: Date.parse(row.created_at) });
-let known = [];   // rows in upload order; a piece's slot is its index here
+// Every board places rows the same way, in upload order: the asked-for slot if it is still free,
+// otherwise the first free one.
+let used = new Set(), cursor = 0, known = [];
+function place(row) {
+  let s = Number.isInteger(row.slot) && row.slot >= 0 ? row.slot : null;
+  if (row.redraw && s != null && used.has(s)) return s;   // a drawing on an existing piece: same place
+  if (s == null || used.has(s)) { while (used.has(cursor)) cursor++; s = cursor; }
+  used.add(s); return s;
+}
+const toPiece = row => ({ id: row.id, slot: row._slot, topic: row.topic || null, redraw: !!row.redraw, url: `${base}/storage/v1/object/public/pieces/${row.path}`, t: Date.parse(row.created_at) });
+let extra = true;   // the topic/slot columns exist (supabase.sql); older projects only have id, path, created_at
 async function rows(afterId = 0) {
-  const r = await fetch(`${base}/rest/v1/pieces?select=id,path,created_at&id=gt.${afterId}&order=id.asc&limit=10000`, { headers: H, cache: 'no-store' });
+  const q = cols => fetch(`${base}/rest/v1/pieces?select=${cols}&id=gt.${afterId}&order=id.asc&limit=10000`, { headers: H, cache: 'no-store' });
+  let r = extra ? await q('id,path,created_at,topic,slot,redraw') : null;
+  if (!r || r.status === 400) { extra = false; r = await q('id,path,created_at'); }
   if (!r.ok) throw new Error(`Supabase ${r.status}`);
   return r.json();
+}
+function take(fresh) {
+  const seen = new Set(known.map(r => r.id)), out = [];
+  for (const row of fresh) { if (seen.has(row.id)) continue; seen.add(row.id); row._slot = place(row); known.push(row); out.push(row); }
+  return out.map(toPiece);
 }
 const supabase = {
   async info() { return { phoneUrl: new URL('phone.html', location.href).href }; },
@@ -52,26 +71,31 @@ const supabase = {
     const r = await fetch(`${base}/rest/v1/pieces?select=id`, { headers: { ...H, Prefer: 'count=exact', Range: '0-0' }, cache: 'no-store' });
     return +((r.headers.get('content-range') || '').split('/')[1] || 0);
   },
-  async list() { known = await rows(); return known.map(toPiece); },
-  async upload(dataUrl) {
+  async list() { used = new Set(); cursor = 0; known = []; return take(await rows()); },
+  async upload(dataUrl, { topic = null, slot = null, redraw = false } = {}) {
     const blob = await (await fetch(dataUrl)).blob();
     if (blob.size > 2.5e6) throw new Error('That picture is too big. Try again.');
     const path = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}.jpg`;
     const up = await fetch(`${base}/storage/v1/object/pieces/${path}`, { method: 'POST', headers: { ...H, 'Content-Type': 'image/jpeg' }, body: blob });
     if (!up.ok) throw new Error('Could not send the photo. Try again.');
-    const r = await fetch(`${base}/rest/v1/pieces`, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json', Prefer: 'return=representation' }, body: JSON.stringify({ path }) });
+    const ins = body => fetch(`${base}/rest/v1/pieces`, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json', Prefer: 'return=representation' }, body: JSON.stringify(body) });
+    let r = await ins({ path, topic, slot: Number.isInteger(slot) ? slot : null, redraw: !!redraw });
+    if (r.status === 400) r = await ins({ path });   // the project has no topic/slot columns yet
     if (!r.ok) throw new Error('Could not send. Try again.');
     const [row] = await r.json();
-    return { ...toPiece(row, Math.max(0, (await this.next()) - 1)) };
+    return { id: row.id, topic, slot, url: `${base}/storage/v1/object/public/pieces/${path}` };
   },
   // New pieces: a light poll every 3 s (no extra library, works everywhere).
   subscribe({ onPiece, onOnline }) {
+    let busy = false;
     const tick = async () => {
+      if (busy) return; busy = true;
       try {
         const fresh = await rows(known.length ? known[known.length - 1].id : 0);
-        for (const row of fresh) { known.push(row); onPiece(toPiece(row, known.length - 1)); }
+        for (const p of take(fresh)) onPiece(p);
         onOnline(true, false);
       } catch { onOnline(false); }
+      busy = false;
     };
     setInterval(tick, 3000);
   },
