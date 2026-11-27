@@ -279,21 +279,21 @@ void main(){
     vec2 cell = vec2(mod(vCell, uPer), uPer - 1.0 - floor(vCell / uPer));
     vec2 fuv = gl_FrontFacing ? vUv : vec2(1.0 - vUv.x, vUv.y);   // read the right way round from inside too
     vec3 photo = texture2D(uAtlas, (cell + clamp(fuv, 0.04, 0.96)) / uPer, uBlur).rgb;
-    col = mix(iri * 0.7, photo * 0.62 * mix(vec3(1.0), iri, 0.12), uPhoto) + iri * 0.05 * uSolid;
-    alpha = mix(0.85, 0.95, uSolid);   // a filled piece: a clear, bright photo
-    col += vec3(1.0, 0.78, 0.55) * 0.05 * (1.0 - uSolid);
+    col = mix(iri * 0.7, photo * mix(1.1, 0.62, uInside) * mix(vec3(1.0), iri, mix(0.3, 0.12, uInside)), uPhoto) + iri * 0.05 * uSolid;
+    alpha = mix(mix(0.55, 0.85, uInside), 0.95, uSolid);   // a filled piece: a clear, bright photo
+    col += vec3(1.0, 0.78, 0.55) * 0.12 * (1.0 - uSolid);
   }
   // firelight: the lamp flickers, and small flames run up through the pieces
   float flame = 0.92 + 0.08 * sin(uTime * 1.9 - vW.y * 1.6 + vSeed * 9.0) * sin(uTime * 1.2 - vW.y * 1.1 + vW.x * 0.6 + vSeed * 3.0);
   float shimmer = (0.9 + 0.1 * sin(uTime * 1.3 + vSeed * 20.0 + dot(vW, vec3(1.3, 0.7, 1.1)))) * flame * uFlick;
   col = mix(col, col * vec3(1.15, 0.92, 0.75), clamp((flame * uFlick - 0.95) * 3.0, 0.0, 1.0));
-  col *= mix(lamp * shimmer, 0.85 + 0.15 * shimmer, has);   // photos keep their own colours
+  col *= mix(lamp * shimmer, 0.85 + 0.15 * shimmer, has * uInside);   // photos keep their own colours
   // bright glassy rims where the light catches the edges and the bevel
   // a thin film of colour slides across every piece, plus a slow glint
   vec3 film = pal(h * 1.6 + vUv.x * 1.1 - vUv.y * 0.8 + ndv * 1.2 + uTime * 0.03);
-  col = mix(col, col * 0.55 + film * 0.6 * lamp, 0.5 * (1.0 - uSolid * 0.6) * (1.0 - has * 0.8));
+  col = mix(col, col * 0.55 + film * 0.6 * lamp, 0.5 * (1.0 - uSolid * 0.6) * (1.0 - has * mix(0.3, 0.8, uInside)));
   float glint = pow(clamp(sin((vUv.x + vUv.y) * 3.0 - uTime * 0.5 + vSeed * 6.0) * 0.5 + 0.5, 0.0, 1.0), 14.0);
-  col += film * glint * 0.3 * (1.0 - uSolid * 0.5) * (1.0 - has * 0.6);
+  col += film * glint * 0.3 * (1.0 - uSolid * 0.5) * (1.0 - has * 0.6 * uInside);
   // inside: every piece shimmers like a soap bubble, warmed by a fire low by the back wall
   float th = vUv.x * 1.7 + vUv.y * 2.3 + sin(vUv.y * 5.0 + uTime * 0.35 + vSeed * 6.0) * 0.35 + ndv * 1.5 + uTime * 0.05;
   vec3 bub = 0.5 + 0.5 * cos(6.2832 * (th + vec3(0.0, 0.33, 0.67)));
@@ -303,7 +303,7 @@ void main(){
   col *= mix(vec3(1.0), vec3(0.95, 0.74, 0.58), uInside);   // a dimmer, amber room
   col += vec3(1.0, 0.45, 0.14) * exp(-length(vW - uHearth) * 0.75) * 0.38 * fire * uInside * (0.5 + 0.5 * has);
   vec3 rim = pal(h + 0.3) * (fres * 0.45 + vEdge * 0.45) * lamp;
-  rim *= mix(mix(1.0, 0.35, uInside), 0.7, has);
+  rim *= mix(mix(1.0, 0.35, uInside), mix(1.0, 0.7, uInside), has);
   col += rim; alpha = max(alpha, (vEdge * 0.3 + fres * 0.15) * mix(mix(1.0, 0.35, uInside), 1.0, has));
   float age = uTime - vBirth;
   col += vec3(1.0, 0.85, 0.7) * has * step(2.6, age) * exp(-max(age - 2.6, 0.0) * 1.8) * 0.7;   // a soft flash as it lands
@@ -674,7 +674,7 @@ function frame(now) {
   // inside, the walls hold still and their photos come into focus
   cards.visible = false;
   uniforms.uScatter.value = 1 - ease;
-  uniforms.uBlur.value = lerp(0.35, 0.0, ease); uniforms.uPhoto.value = lerp(0.95, 0.97, ease); uniforms.uSolid.value = ease * 0.85;
+  uniforms.uBlur.value = lerp(0.9, 0.0, ease); uniforms.uPhoto.value = lerp(0.72, 0.97, ease); uniforms.uSolid.value = ease * 0.85;
   lampGlow.material.opacity = roofGlow.material.opacity = 1 - ease;
   hearthGlow.material.opacity = ease * flick * (0.9 + 0.1 * Math.sin(t * 4.3));
   dustMat.uniforms.uScale.value *= 1 - ease * 0.6;
@@ -817,6 +817,17 @@ function updatePiece(slot, img) {
 }
 // Inside, choose an empty place: a QR code appears just for it. The photo sent from it lands right there.
 const spot = { v: null, timer: 0 };
+{ // the same puzzle-piece outline as the pieces in the house, big, around the QR
+  const h = 40, t = 80 * 0.17; let d = '';
+  const edge = (ax, ay, bx, by, dir, first) => {
+    const dx = bx - ax, dy = by - ay, len = Math.hypot(dx, dy), nx = (dy / len) * dir, ny = (-dx / len) * dir;
+    const at = (f, o) => `${(ax + dx * f + nx * o).toFixed(2)} ${(-(ay + dy * f + ny * o)).toFixed(2)}`;
+    if (first) d += `M${at(0, 0)}`;
+    d += `L${at(0.36, 0)}C${at(0.44, t * 0.25)} ${at(0.28, t)} ${at(0.5, t)}C${at(0.72, t)} ${at(0.56, t * 0.25)} ${at(0.64, 0)}L${at(1, 0)}`;
+  };
+  edge(-h, -h, h, -h, 1, true); edge(h, -h, h, h, -1); edge(h, h, -h, h, -1); edge(-h, h, -h, -h, 1);
+  $('#spotPath').setAttribute('d', d + 'Z');
+}
 function openSpot(v) {
   if (!phoneUrl) { setCaption('Scan the code in the corner to add a piece', 4000); return; }
   spot.v = v;
