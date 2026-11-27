@@ -45,7 +45,16 @@ const H = key && key.startsWith('eyJ') ? { apikey: key, Authorization: `Bearer $
 // Every board places rows the same way, in upload order: the asked-for slot if it is still free,
 // otherwise the first free one.
 let used = new Set(), cursor = 0, known = [];
+// The place, topic and "drawn over" flag also ride in the photo's file name (s12_tfood_r_xxxx.jpg),
+// so they work even in a project that never got the topic/slot/redraw columns.
+function fromPath(row) {
+  const m = /^(?:s(\d+)_)?(?:t([a-z]{2,16})_)?(r_)?/.exec(row.path || '');
+  if (row.slot == null && m[1] != null) row.slot = +m[1];
+  if (!row.topic && m[2]) row.topic = m[2];
+  if (!row.redraw && m[3]) row.redraw = true;
+}
 function place(row) {
+  fromPath(row);
   let s = Number.isInteger(row.slot) && row.slot >= 0 ? row.slot : null;
   if (row.redraw && s != null && used.has(s)) return s;   // a drawing on an existing piece: same place
   if (s == null || used.has(s)) { while (used.has(cursor)) cursor++; s = cursor; }
@@ -75,7 +84,8 @@ const supabase = {
   async upload(dataUrl, { topic = null, slot = null, redraw = false } = {}) {
     const blob = await (await fetch(dataUrl)).blob();
     if (blob.size > 2.5e6) throw new Error('That picture is too big. Try again.');
-    const path = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}.jpg`;
+    const tag = (Number.isInteger(slot) ? `s${slot}_` : '') + (topic && /^[a-z]{2,16}$/.test(topic) ? `t${topic}_` : '') + (redraw ? 'r_' : '');
+    const path = `${tag}${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}.jpg`;
     const up = await fetch(`${base}/storage/v1/object/pieces/${path}`, { method: 'POST', headers: { ...H, 'Content-Type': 'image/jpeg' }, body: blob });
     if (!up.ok) throw new Error('Could not send the photo. Try again.');
     const ins = body => fetch(`${base}/rest/v1/pieces`, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json', Prefer: 'return=representation' }, body: JSON.stringify(body) });

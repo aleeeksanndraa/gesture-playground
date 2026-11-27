@@ -214,7 +214,7 @@ const uniforms = {
 const glassVert = `
 attribute vec3 aOff, aDisp, aFly; attribute vec4 aQuat; attribute float aCell, aBirth, aSeed, aLoose, aFade;
 uniform float uMirror, uTime, uSize, uLift, uScatter; 
-varying vec3 vW, vN; varying vec2 vUv; varying float vCell, vBirth, vSeed, vId, vEdge, vLoose, vFade, vFly;
+varying vec3 vW, vN; varying vec2 vUv; varying float vCell, vBirth, vSeed, vId, vEdge, vLoose, vFade, vFly, vPf;
 vec3 rot(vec4 q, vec3 v){ return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v); }
 void main(){
   // loose pieces breathe and drift a little
@@ -240,7 +240,7 @@ void main(){
   float fs = ff * (9.0 + aSeed * 6.0);
   lp.xy = mat2(cos(fs), -sin(fs), sin(fs), cos(fs)) * lp.xy;
   lp.yz = mat2(cos(fs * 0.7), -sin(fs * 0.7), sin(fs * 0.7), cos(fs * 0.7)) * lp.yz;
-  vFly = ff;
+  vFly = ff; vPf = pf;
   vec3 p = rot(aQuat, lp) + home + wander + bob + (outDir * 1.0 + vec3(0.0, 0.45 + aSeed * 0.8, 0.0)) * br + push + aFly * ff;
   p.y += uLift;
   if (uMirror > 0.5) p.y = -p.y;
@@ -254,7 +254,7 @@ void main(){
 }`;
 const glassFrag = `
 uniform float uTime, uTurn, uPer, uMirror, uInside, uHover, uBlur, uPhoto, uFade, uSolid, uFlick; uniform vec3 uLight, uHearth; uniform sampler2D uAtlas;
-varying vec3 vW, vN; varying vec2 vUv; varying float vCell, vBirth, vSeed, vId, vEdge, vLoose, vFade, vFly;
+varying vec3 vW, vN; varying vec2 vUv; varying float vCell, vBirth, vSeed, vId, vEdge, vLoose, vFade, vFly, vPf;
 // warm iridescence: amber, peach, rose, lilac, a breath of sky blue
 vec3 pal(float h){
   h = fract(h) * 5.0;
@@ -310,7 +310,8 @@ void main(){
   col += vec3(1.0, 0.8, 0.6) * vFly * 2.5; alpha = max(alpha, vFly);                                 // bright while it falls
   if (abs(vId - uHover) < 0.5) { col = col * 1.5 + vec3(0.25, 0.2, 0.18); alpha = max(alpha, 0.75); }
   if (uMirror > 0.5) { col *= mix(0.38, 0.8, uInside) * exp(vW.y * mix(0.7, 0.2, uInside)); }
-  alpha *= uFade * vFade;
+  alpha *= uFade * vFade * mix(1.0, 0.12, smoothstep(0.15, 0.9, vPf));   // blown pieces almost dissolve
+  col *= mix(1.0, 0.5, smoothstep(0.15, 0.9, vPf));
   gl_FragColor = vec4(col * alpha, alpha);    // premultiplied, with a little extra glow
 }`;
 const glassMat = new THREE.ShaderMaterial({ vertexShader: glassVert, fragmentShader: glassFrag, uniforms,
@@ -634,7 +635,7 @@ function pushAt(x0, y0, x1, y1) {
   const dist = camera.position.length(), px2w = 2 * dist * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) / innerHeight;
   const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0), up = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1);
   const fwd = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 2).negate();
-  const speed = Math.min(len, 60) * px2w * 3.2;                      // faster sweep, stronger gust
+  const speed = Math.min(len, 60) * px2w * 1.7;   // they drift a little way and melt, not fly off                      // faster sweep, stronger gust
   const ux = dx / len, uy = dy / len;
   for (let i = 0; i < N; i++) {
     const px = scr[i * 2] - x0, py = scr[i * 2 + 1] - y0;
@@ -942,7 +943,23 @@ function doorAction() {
   view.ipitch = 0; twoHist.length = 0; door.cool = door.now + 1500;
 }
 door.el.addEventListener('click', doorAction);
+const xc = { el: $('#xclose'), over: false, since: 0 };
+xc.el.addEventListener('click', e => { e.stopPropagation(); doorAction(); });
+function dwellX(c, now) {
+  let over = false;
+  if (c && !xc.el.hidden && now > door.cool) {
+    const r = xc.el.getBoundingClientRect(), x = c.x * innerWidth, y = c.y * innerHeight, pad = 26;
+    over = x > r.left - pad && x < r.right + pad && y > r.top - pad && y < r.bottom + pad;
+  }
+  if (over && !xc.over) xc.since = now;
+  xc.over = over;
+  const p = over ? clamp((now - xc.since) / 900, 0, 1) : 0;
+  xc.el.style.setProperty('--p', p); xc.el.classList.toggle('over', over);
+  if (p >= 1) { xc.over = false; doorAction(); }
+  return over;
+}
 function dwellDoor(c, now) {
+  if (dwellX(c, now)) return;
   let over = false; door.now = now;
   if (c && now > door.cool) {
     const r = door.el.getBoundingClientRect(), x = c.x * innerWidth, y = c.y * innerHeight, pad = 30;
@@ -955,6 +972,8 @@ function dwellDoor(c, now) {
   if (p >= 1) { door.over = false; doorAction(); door.el.style.setProperty('--p', 0); }
 }
 function doorLabel() {
+  const open = spot.v != null || !$('#focus').hidden;
+  if (xc.el.hidden === open) xc.el.hidden = !open;
   const t = ink.on ? 'Done' : spot.v != null ? 'Close' : !$('#focus').hidden ? 'Back' : view.insideT > 0.5 ? 'Step outside' : 'Step inside';
   if (door.el.dataset.t !== t) { door.el.dataset.t = t; door.el.querySelector('span').textContent = t; }
 }
