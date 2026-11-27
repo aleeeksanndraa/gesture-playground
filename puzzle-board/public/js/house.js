@@ -273,8 +273,8 @@ void main(){
   vec3 iri = pal(h);
   float lamp = 0.6 + 0.45 * exp(-length(vW - uLight) * 0.3);        // the warm lamp inside the house
   float has = step(0.0, vCell);
-  vec3 col = iri * 0.22;          // an empty spot: a faint ghost of glass
-  float alpha = 0.03;
+  vec3 col = iri * mix(0.75, 0.22, uInside);     // an empty spot: iridescent glass outside, a faint ghost inside
+  float alpha = mix(0.11, 0.03, uInside);
   if (has > 0.5) {
     vec2 cell = vec2(mod(vCell, uPer), uPer - 1.0 - floor(vCell / uPer));
     vec2 fuv = gl_FrontFacing ? vUv : vec2(1.0 - vUv.x, vUv.y);   // read the right way round from inside too
@@ -303,8 +303,8 @@ void main(){
   col *= mix(vec3(1.0), vec3(0.95, 0.74, 0.58), uInside);   // a dimmer, amber room
   col += vec3(1.0, 0.45, 0.14) * exp(-length(vW - uHearth) * 0.75) * 0.38 * fire * uInside * (0.5 + 0.5 * has);
   vec3 rim = pal(h + 0.3) * (fres * 0.45 + vEdge * 0.45) * lamp;
-  rim *= mix(0.35, 0.7, has);
-  col += rim; alpha = max(alpha, (vEdge * 0.3 + fres * 0.15) * mix(0.35, 1.0, has));
+  rim *= mix(mix(1.0, 0.35, uInside), 0.7, has);
+  col += rim; alpha = max(alpha, (vEdge * 0.3 + fres * 0.15) * mix(mix(1.0, 0.35, uInside), 1.0, has));
   float age = uTime - vBirth;
   col += vec3(1.0, 0.85, 0.7) * has * step(2.6, age) * exp(-max(age - 2.6, 0.0) * 1.8) * 0.7;   // a soft flash as it lands
   col += vec3(1.0, 0.8, 0.6) * vFly * 2.5; alpha = max(alpha, vFly);                                 // bright while it falls
